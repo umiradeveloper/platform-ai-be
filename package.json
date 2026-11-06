@@ -1,0 +1,61 @@
+{
+  "name": "umira-ai-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Umira AI Assistant Platform - NestJS backend",
+  "scripts": {
+    "setup:mac": "bash scripts/setup-mac.sh",
+    "setup:ubuntu": "sudo bash scripts/setup-ubuntu.sh",
+    "dev": "nest start --watch",
+    "build": "nest build && npm run build:seed",
+    "build:seed": "tsc prisma/seed.ts --outDir dist-seed --esModuleInterop --skipLibCheck --module commonjs --target ES2022",
+    "start": "pm2 start ecosystem.config.cjs && pm2 save",
+    "start:node": "node dist/main.js",
+    "restart": "pm2 restart umira-api --update-env",
+    "stop": "pm2 stop umira-api",
+    "logs": "pm2 logs umira-api",
+    "update": "npm install && npm run build && npm run db:migrate && npm run restart",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prisma:generate": "prisma generate",
+    "db:migrate": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate deploy",
+    "db:migrate:dev": "node --env-file-if-exists=.env node_modules/prisma/build/index.js migrate dev",
+    "db:studio": "node --env-file-if-exists=.env node_modules/prisma/build/index.js studio",
+    "db:seed": "node --env-file-if-exists=.env -r ts-node/register prisma/seed.ts",
+    "db:seed:prod": "node --env-file-if-exists=.env dist-seed/seed.js",
+    "mock:hermes": "node tools/mock-hermes.mjs"
+  },
+  "prisma": {
+    "seed": "node --env-file-if-exists=.env -r ts-node/register prisma/seed.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "@nestjs/swagger": "^11.0.0",
+    "@nestjs/throttler": "^6.4.0",
+    "@prisma/client": "6.19.3",
+    "argon2": "^0.41.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "cookie-parser": "^1.4.7",
+    "helmet": "^8.0.0",
+    "ioredis": "^5.4.2",
+    "prisma": "6.19.3",
+    "prom-client": "^15.1.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

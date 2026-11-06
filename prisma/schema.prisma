@@ -1,0 +1,206 @@
+// Umira AI Assistant Platform — Prisma schema (MySQL)
+// Based on PRD v1.0 section 7, plus production tables suggested in the PRD notes:
+// refresh tokens, provider credentials, audit log, system settings, soft delete.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ProviderType {
+  OPENAI
+  ANTHROPIC
+  GEMINI
+  HERMES
+  OPENAI_COMPATIBLE
+}
+
+enum UsageStatus {
+  SUCCESS
+  ERROR
+  CANCELLED
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  name               String
+  email              String              @unique
+  passwordHash       String
+  role               UserRole            @default(USER)
+  isActive           Boolean             @default(true)
+  dailyTokenLimit    Int?                // null = pakai default dari SystemSetting
+  lastLoginAt        DateTime?
+  conversations      Conversation[]
+  usageLogs          UsageLog[]
+  files              File[]
+  refreshTokens      RefreshToken[]
+  passwordResets     PasswordResetToken[]
+  auditLogs          AuditLog[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  userAgent  String?   @db.VarChar(512)
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  userId     String
+  title      String    @default("New Chat")
+  modelId    String?   // model terakhir yang dipakai di percakapan ini
+  deletedAt  DateTime? // soft delete
+  user       User      @relation(fields: [userId], references: [id])
+  messages   Message[]
+  files      File[]
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  modelId        String?
+  role           MessageRole
+  content        String       @db.LongText
+  inputTokens    Int          @default(0)
+  outputTokens   Int          @default(0)
+  // Jejak tool yang dijalankan agent (mis. Hermes) — JSON array, hanya ringkasan untuk UI
+  toolEvents     Json?
+  isError        Boolean      @default(false)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  model          AIModel?     @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model ProviderConfig {
+  id              String       @id @default(cuid())
+  type            ProviderType @unique
+  displayName     String
+  baseUrl         String?
+  apiKeyEncrypted String?      @db.Text // AES-256-GCM, tidak pernah dikirim ke frontend
+  extraHeaders    Json?        // header tambahan (mis. X-Hermes-Session-Key)
+  isEnabled       Boolean      @default(true)
+  models          AIModel[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model AIModel {
+  id                String          @id @default(cuid())
+  provider          ProviderType
+  modelName         String
+  displayName       String
+  description       String?
+  isActive          Boolean         @default(true)
+  isDefault         Boolean         @default(false)
+  maxContextTokens  Int             @default(128000)
+  maxOutputTokens   Int             @default(4096)
+  inputPricePer1M   Decimal         @default(0) @db.Decimal(12, 4) // USD per 1 juta token
+  outputPricePer1M  Decimal         @default(0) @db.Decimal(12, 4)
+  fallbackModelId   String?
+  fallbackModel     AIModel?        @relation("ModelFallback", fields: [fallbackModelId], references: [id], onDelete: SetNull)
+  fallbackFor       AIModel[]       @relation("ModelFallback")
+  providerConfigId  String?
+  providerConfig    ProviderConfig? @relation(fields: [providerConfigId], references: [id], onDelete: SetNull)
+  sortOrder         Int             @default(0)
+  messages          Message[]
+  usageLogs         UsageLog[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([provider, modelName])
+}
+
+model UsageLog {
+  id             String      @id @default(cuid())
+  userId         String
+  modelId        String
+  conversationId String?
+  inputTokens    Int         @default(0)
+  outputTokens   Int         @default(0)
+  estimatedCost  Decimal     @default(0) @db.Decimal(15, 6)
+  latencyMs      Int         @default(0)
+  status         UsageStatus @default(SUCCESS)
+  errorMessage   String?     @db.VarChar(1000)
+  user           User        @relation(fields: [userId], references: [id])
+  model          AIModel     @relation(fields: [modelId], references: [id])
+  createdAt      DateTime    @default(now())
+
+  @@index([userId, createdAt])
+  @@index([modelId, createdAt])
+  @@index([createdAt])
+}
+
+model File {
+  id             String        @id @default(cuid())
+  userId         String
+  conversationId String?
+  filename       String
+  storageKey     String
+  mimeType       String
+  fileSize       BigInt
+  user           User          @relation(fields: [userId], references: [id])
+  conversation   Conversation? @relation(fields: [conversationId], references: [id])
+  createdAt      DateTime      @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String   // mis. "user.deactivate", "model.update", "provider.update"
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  ipAddress  String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
