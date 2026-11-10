@@ -62,6 +62,43 @@ Atur di `.env`:
 Refresh token disimpan di cookie httpOnly milik domain backend. Access token hanya disimpan di memori
 browser.
 
+## Login dengan akun SuperApps
+
+Karyawan bisa masuk ke Umira AI memakai **email atau username + password SuperApps** mereka. Backend
+membaca tabel `users` dan `role` di database SuperApps secara **read-only** saat login, lalu
+mencocokkan hash bcrypt. Password tidak pernah disalin ke database Umira.
+
+| Aturan | Default (`.env`) |
+|---|---|
+| Ditolak | `SUPERAPPS_DENY_ROLE_CODES=01,41` (Vendor, Kandidat), akun dengan `isApproval ≠ 1`, dan akun tanpa role |
+| Menjadi ADMIN di Umira | `SUPERAPPS_ADMIN_ROLE_CODES=99,80,31` (Admin / Chief IT / IT Engineer, CTO, CEO) |
+| Role lain | USER |
+
+- Akun yang dicabut di SuperApps (approval dibatalkan, role diganti ke Vendor, atau dihapus) kehilangan
+  akses paling lambat saat access token berakhir (15 menit). Pada saat itu sesinya juga dicabut.
+- Role dan nama mengikuti SuperApps. Nama diambil dari `username` bila kolom `nama` berisi nama
+  perusahaan. Admin Umira tetap bisa menonaktifkan akun atau mengatur kuota token.
+- Ganti atau lupa password dilakukan lewat SuperApps.
+- Akun lokal Umira, misalnya admin dari seed, tetap bisa login, termasuk saat server SuperApps mati.
+  Bila email akun lokal sama dengan email di SuperApps, akun itu otomatis ditautkan ke akun SuperApps.
+
+**Membuat user read-only di MySQL SuperApps** (jalankan oleh DBA SuperApps, ganti IP dan password):
+
+```sql
+CREATE USER 'umira_ai_ro'@'<IP-server-backend-Umira>' IDENTIFIED BY '<password-kuat>';
+GRANT SELECT (id_user, id_role, nama, username, password, email, isApproval) ON superapps.users TO 'umira_ai_ro'@'<IP-server-backend-Umira>';
+GRANT SELECT ON superapps.role TO 'umira_ai_ro'@'<IP-server-backend-Umira>';
+FLUSH PRIVILEGES;
+```
+
+Lalu di `backend/.env`:
+
+```bash
+SUPERAPPS_DB_URL=mysql://umira_ai_ro:<password-kuat>@<host-superapps>:<port>/superapps
+```
+
+Restart backend, lalu cek `GET /api/v1/health`. Hasilnya harus menunjukkan `"superapps":"ok"`.
+
 ## Integrasi Hermes Agent
 
 `src/providers/hermes.adapter.ts` memanggil `POST {HERMES_BASE_URL}/chat/completions` (streaming) dengan

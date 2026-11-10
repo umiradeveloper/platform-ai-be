@@ -7,6 +7,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { AdminController } from './admin/admin.controller';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
+import { SuperAppsService } from './auth/superapps.service';
 import { ChatController } from './chat/chat.controller';
 import { ChatService } from './chat/chat.service';
 import { AuditModule } from './common/audit.service';
@@ -25,14 +26,20 @@ import { UsersController } from './users/users.controller';
 @ApiTags('Health')
 @Controller()
 class HealthController {
-  constructor(private readonly prisma: PrismaService, private readonly redis: RedisService, private readonly settings: SettingsService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+    private readonly settings: SettingsService,
+    private readonly superapps: SuperAppsService,
+  ) {}
 
   @Public()
   @Get('health')
   async health() {
     const db = await this.prisma.$queryRaw`SELECT 1`.then(() => 'ok').catch(() => 'down');
     const redis = this.redis.client ? await this.redis.client.ping().then(() => 'ok').catch(() => 'down') : 'disabled (in-memory)';
-    return { status: db === 'ok' ? 'ok' : 'degraded', db, redis, time: new Date().toISOString() };
+    const superapps = await this.superapps.ping();
+    return { status: db === 'ok' && superapps !== 'down' ? 'ok' : 'degraded', db, redis, superapps, time: new Date().toISOString() };
   }
 
   /** Info publik untuk halaman login (nama aplikasi & status registrasi). */
@@ -41,7 +48,7 @@ class HealthController {
   async config() {
     const s = await this.settings.get();
     const hasUsers = (await this.prisma.user.count()) > 0;
-    return { appName: s.appName, allowRegistration: s.allowRegistration || !hasUsers };
+    return { appName: s.appName, allowRegistration: s.allowRegistration || !hasUsers, superappsLogin: this.superapps.enabled };
   }
 }
 
@@ -75,6 +82,7 @@ class HealthController {
   ],
   providers: [
     AuthService,
+    SuperAppsService,
     ChatService,
     UsageService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },

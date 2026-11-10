@@ -16,6 +16,12 @@ enum UserRole {
   ADMIN
 }
 
+/// Sumber akun: LOCAL (password disimpan di Umira) atau SUPERAPPS (password dicek ke DB SuperApps)
+enum AuthSource {
+  LOCAL
+  SUPERAPPS
+}
+
 enum MessageRole {
   USER
   ASSISTANT
@@ -43,6 +49,10 @@ model User {
   passwordHash       String
   role               UserRole            @default(USER)
   isActive           Boolean             @default(true)
+  authSource         AuthSource          @default(LOCAL)
+  externalId         String?             @unique // users.id_user di SuperApps
+  externalRole       String?             // nama_role SuperApps (info)
+  externalUsername   String?
   dailyTokenLimit    Int?                // null = pakai default dari SystemSetting
   lastLoginAt        DateTime?
   conversations      Conversation[]

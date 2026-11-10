@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
@@ -51,7 +51,9 @@ export class AuthController {
   @HttpCode(200)
   @Post('login')
   async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const r = await this.auth.login(dto.email, dto.password, meta(req));
+    const identifier = (dto.identifier ?? dto.email ?? '').trim();
+    if (!identifier) throw new BadRequestException('Email atau username wajib diisi');
+    const r = await this.auth.login(identifier, dto.password, meta(req));
     setRefreshCookie(res, r.refreshToken, r.refreshExpiresAt);
     return { accessToken: r.accessToken, user: r.user };
   }

@@ -92,6 +92,7 @@ export class AdminController {
       take: 500,
       select: {
         id: true, name: true, email: true, role: true, isActive: true, dailyTokenLimit: true, lastLoginAt: true, createdAt: true,
+        authSource: true, externalRole: true, externalUsername: true,
         _count: { select: { conversations: true } },
       },
     });
@@ -132,6 +133,9 @@ export class AdminController {
     }
     const before = await this.prisma.user.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Pengguna tidak ditemukan');
+    if (before.authSource === 'SUPERAPPS' && dto.role && dto.role !== before.role) {
+      throw new BadRequestException('Role akun SuperApps mengikuti role di SuperApps (diatur lewat SUPERAPPS_ADMIN_ROLE_CODES).');
+    }
     const user = await this.prisma.user.update({
       where: { id },
       data: { name: dto.name, role: dto.role, isActive: dto.isActive, dailyTokenLimit: dto.dailyTokenLimit },
