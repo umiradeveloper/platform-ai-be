@@ -112,7 +112,9 @@ export class SynologyClient {
   /** SYNO.API.Info — path CGI tiap API berbeda antar versi DSM (auth.cgi vs entry.cgi). */
   private async api(name: string): Promise<ApiInfo> {
     if (!this.info || Date.now() - this.infoAt > 3_600_000) {
-      const q = 'SYNO.API.Auth,SYNO.FileStation.List,SYNO.FileStation.Search,SYNO.FileStation.Download,SYNO.FileStation.Upload';
+      const q =
+        'SYNO.API.Auth,SYNO.FileStation.List,SYNO.FileStation.Search,SYNO.FileStation.Download,SYNO.FileStation.Upload,' +
+        'SYNO.Finder.FileIndexing.Search,SYNO.Finder.FileIndexing.Folder,SYNO.Finder.FileIndexing.Status';
       const res = await this.request(`${this.baseUrl}/webapi/query.cgi?api=SYNO.API.Info&version=1&method=query&query=${q}`);
       const j: any = await res.json().catch(() => null);
       if (!j?.success) throw new SynologyError('network', 'Alamat Synology tidak valid (SYNO.API.Info gagal). Periksa SYNOLOGY_URL.');
@@ -225,6 +227,96 @@ export class SynologyClient {
     return { files, finished };
   }
 
+  /**
+   * Telusuri folder secara rekursif (File Station List per folder). Folder sistem/tersembunyi dilewati.
+   * Berhenti setelah `maxEntries` file atau `maxFolders` folder agar folder raksasa tidak membuat server macet.
+   */
+  async walk(sid: string, root: string, opts: { maxEntries?: number; maxFolders?: number; maxDepth?: number; concurrency?: number } = {}) {
+    const maxEntries = opts.maxEntries ?? 5000;
+    const maxFolders = opts.maxFolders ?? 500;
+    const maxDepth = opts.maxDepth ?? 12;
+    const concurrency = opts.concurrency ?? 4; // tiap List ±250 ms di NAS → telusuri beberapa folder sekaligus
+    const files: SynoFile[] = [];
+    let queue: { path: string; depth: number }[] = [{ path: root, depth: 0 }];
+    let folders = 0;
+    let truncated = false;
+    const listAll = async (path: string) => {
+      const out: SynoFile[] = [];
+      for (let offset = 0; ; offset += 1000) {
+        const r = await this.list(sid, path, offset, 1000);
+        out.push(...r.files);
+        if (offset + 1000 >= r.total || !r.files.length) break;
+      }
+      return out;
+    };
+    while (queue.length && !truncated) {
+      const batch = queue.slice(0, Math.min(concurrency, maxFolders - folders));
+      queue = queue.slice(batch.length);
+      if (!batch.length) {
+        truncated = true;
+        break;
+      }
+      folders += batch.length;
+      const results = await Promise.all(batch.map((b) => listAll(b.path)));
+      results.forEach((entries, i) => {
+        for (const f of entries) {
+          if (isHiddenName(f.name)) continue;
+          if (f.isdir) {
+            if (batch[i].depth + 1 <= maxDepth) queue.push({ path: f.path, depth: batch[i].depth + 1 });
+          } else if (files.length < maxEntries) files.push(f);
+          else truncated = true;
+        }
+      });
+      if (queue.length && folders >= maxFolders) truncated = true;
+    }
+    return { files, truncated, foldersScanned: folders };
+  }
+
+  // ------------------------------------------------------------------ universal search (SYNO.Finder)
+
+  /** Apakah paket Universal Search tersedia & bisa dipakai dengan sesi ini. */
+  async finderAvailable(): Promise<boolean> {
+    await this.api('SYNO.API.Auth');
+    return !!this.info?.['SYNO.Finder.FileIndexing.Search'];
+  }
+
+  /** Folder yang diindeks Universal Search; `content` = isi dokumen ikut diindeks (bukan hanya nama). */
+  async finderFolders(sid: string): Promise<{ path: string; name: string; content: boolean }[]> {
+    const d = await this.call('SYNO.Finder.FileIndexing.Folder', 'list', 1, {}, sid);
+    return (d.folder ?? []).map((f: any) => ({ path: f.path, name: f.name, content: !!f.document }));
+  }
+
+  /**
+   * Pencarian memakai indeks Universal Search (cepat, seluruh NAS, ikut hak akses akun DSM).
+   * Mencocokkan nama file, dan isi dokumen pada folder yang pengindeksan kontennya aktif.
+   * Catatan: API ini tidak didokumentasikan resmi oleh Synology (dipakai oleh UI Universal Search DSM 7).
+   */
+  async finderSearch(sid: string, keyword: string, from = 0, size = 50): Promise<{ total: number; files: (SynoFile & { score: number })[] }> {
+    const weights = [
+      { field: 'SYNOMDWildcard', weight: 1 },
+      { field: 'SYNOMDTextContent', weight: 1 },
+      { field: 'SYNOMDSearchFileName', weight: 8.5 },
+    ];
+    const d = await this.call(
+      'SYNO.Finder.FileIndexing.Search',
+      'search',
+      1,
+      { keyword: JSON.stringify(keyword), from, size, search_weight_list: JSON.stringify(weights) },
+      sid,
+    );
+    const files = (d.hits ?? [])
+      .filter((h: any) => h.readable !== false && h.SYNOMDSharePath)
+      .map((h: any) => ({
+        path: String(h.SYNOMDSharePath),
+        name: String(h.SYNOMDFSName ?? String(h.SYNOMDSharePath).split('/').pop()),
+        isdir: h.SYNOMDIsDir === 'y',
+        size: h.SYNOMDIsDir === 'y' ? undefined : Number(h.SYNOMDFSSize ?? 0) || undefined,
+        score: Number(h.additional?.score ?? 0),
+      }))
+      .filter((f: SynoFile) => !f.path.split('/').filter(Boolean).some(isHiddenName));
+    return { total: Number(d.total ?? files.length), files };
+  }
+
   /** Download satu file; dibatasi maxBytes agar file raksasa tidak memenuhi memori. */
   async download(sid: string, path: string, maxBytes: number): Promise<Buffer> {
     const info = await this.api('SYNO.FileStation.Download');
@@ -268,6 +360,11 @@ export class SynologyClient {
     const j: any = await res.json().catch(() => null);
     if (!j?.success) this.fail(j?.error?.code);
   }
+}
+
+/** Folder/file sistem Synology & macOS yang tidak relevan untuk dibaca AI. */
+export function isHiddenName(name: string) {
+  return !name || name.startsWith('.') || name.startsWith('#') || name.startsWith('@') || name === '__MACOSX' || name === 'Thumbs.db' || name.startsWith('~$');
 }
 
 function toFile(f: any): SynoFile {

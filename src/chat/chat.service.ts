@@ -12,6 +12,7 @@ import Redis from 'ioredis';
 import { PrismaService } from '../common/prisma.service';
 import { RedisService } from '../common/redis.service';
 import { ExtractedFile, SynologyService } from '../synology/synology.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import { AuthUser } from '../common/auth.decorators';
 import { SettingsService } from '../settings/settings.service';
 import { ProviderRegistry } from '../providers/provider.registry';
@@ -50,6 +51,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     private readonly providers: ProviderRegistry,
     private readonly redis: RedisService,
     private readonly synology: SynologyService,
+    private readonly knowledge: KnowledgeService,
   ) {}
 
   onModuleInit() {
@@ -129,7 +131,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       where: { conversationId, isError: false },
       orderBy: { createdAt: 'desc' },
       take: s.maxHistoryMessages,
-      select: { role: true, content: true, attachments: { select: { name: true, path: true, text: true, truncated: true } } },
+      select: { role: true, content: true, attachments: { select: { source: true, name: true, path: true, text: true, truncated: true } } },
     });
     const budget = Math.max(2000, model.maxContextTokens - model.maxOutputTokens - estimateTokens(s.systemPrompt) - 500);
     const picked: ChatMessageInput[] = [];
@@ -150,7 +152,15 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
   /** CHAT-01..04: kirim pesan baru (membuat percakapan bila belum ada). */
   async send(
     user: AuthUser,
-    input: { conversationId?: string; content: string; modelId?: string; synologyFiles?: string[] },
+    input: {
+      conversationId?: string;
+      content: string;
+      modelId?: string;
+      synologyFiles?: string[];
+      synologyFolders?: string[];
+      useKnowledge?: boolean;
+      knowledgeIndexIds?: string[];
+    },
     emit: Emit,
     signal?: AbortSignal,
   ) {
@@ -165,8 +175,15 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     const model = await this.pickModel(input.modelId, conv?.modelId);
 
     // Lampiran dari Synology: diunduh & diekstrak dengan hak akses user — gagal di sini = HTTP error biasa.
-    const files: ExtractedFile[] = [];
-    for (const p of [...new Set(input.synologyFiles ?? [])]) files.push(await this.synology.extract(user.id, p));
+    const files: (ExtractedFile & { source: string })[] = [];
+    for (const p of [...new Set(input.synologyFiles ?? [])]) files.push({ source: 'synology', ...(await this.synology.extract(user.id, p)) });
+    for (const p of [...new Set(input.synologyFolders ?? [])]) {
+      for (const f of await this.synology.extractFolder(user.id, p)) files.push({ source: f.mimeType === 'text/x-folder-listing' ? 'folder' : 'synology', ...f });
+    }
+    // RAG: potongan relevan dari folder basis pengetahuan pengguna
+    if (input.useKnowledge && this.knowledge.enabled) {
+      for (const f of await this.knowledge.retrieveForChat(user.id, content, input.knowledgeIndexIds)) files.push({ source: 'knowledge', ...f });
+    }
 
     if (!conv) conv = await this.prisma.conversation.create({ data: { userId: user.id, modelId: model.id } });
     const userMsg = await this.prisma.message.create({
@@ -176,7 +193,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
         content,
         inputTokens: estimateTokens(withAttachments(content, files)),
         attachments: files.length
-          ? { create: files.map((f) => ({ source: 'synology', path: f.path, name: f.name, mimeType: f.mimeType, size: f.size, text: f.text, truncated: f.truncated })) }
+          ? { create: files.map((f) => ({ source: f.source, path: f.path, name: f.name, mimeType: f.mimeType, size: f.size, text: f.text, truncated: f.truncated })) }
           : undefined,
       },
     });
@@ -184,7 +201,8 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       conversationId: conv.id,
       userMessageId: userMsg.id,
       model: this.modelInfo(model),
-      attachments: files.map((f) => ({ name: f.name, path: f.path, size: f.size, truncated: f.truncated })),
+      attachments: files.map((f) => ({ source: f.source, name: f.name, path: f.path, size: f.size, truncated: f.truncated })),
+      knowledgeUsed: !!input.useKnowledge,
     });
 
     if (conv.title === 'New Chat' && s.autoTitle) {
@@ -395,13 +413,28 @@ export function looksLikeRawToolCall(text: string): boolean {
 }
 
 /** Gabungkan isi file lampiran ke pesan user agar terbaca model (format jelas, dengan batas file). */
-function withAttachments(content: string, files: { name: string; path: string; text: string; truncated: boolean }[]) {
+function withAttachments(content: string, files: { source?: string; name: string; path: string; text: string; truncated: boolean }[]) {
   if (!files?.length) return content;
-  const blocks = files.map(
-    (f) =>
-      `<lampiran nama="${f.name}" sumber="Synology" path="${f.path}"${f.truncated ? ' terpotong="ya"' : ''}>\n${f.text}\n</lampiran>`,
-  );
-  return `${content}\n\n[Pengguna melampirkan ${files.length} file dari Synology. Gunakan isinya untuk menjawab.]\n${blocks.join('\n\n')}`;
+  const own = files.filter((f) => f.source !== 'knowledge');
+  const kb = files.filter((f) => f.source === 'knowledge');
+  const parts = [content];
+  if (own.length) {
+    const blocks = own.map((f) =>
+      f.source === 'folder'
+        ? `<daftar_folder path="${f.path}">\n${f.text}\n</daftar_folder>`
+        : `<lampiran nama="${f.name}" sumber="Synology" path="${f.path}"${f.truncated ? ' terpotong="ya"' : ''}>\n${f.text}\n</lampiran>`,
+    );
+    const n = own.filter((f) => f.source !== 'folder').length;
+    parts.push(`[Pengguna melampirkan ${n} file dari Synology${own.some((f) => f.source === 'folder') ? ' (termasuk isi folder)' : ''}. Gunakan isinya untuk menjawab.]\n${blocks.join('\n\n')}`);
+  }
+  if (kb.length) {
+    const blocks = kb.map((f) => `<sumber nama="${f.name}" path="${f.path}">\n${f.text}\n</sumber>`);
+    parts.push(
+      `[Potongan paling relevan dari basis pengetahuan Synology pengguna. Jawab berdasarkan sumber ini bila relevan, ` +
+        `sebutkan nama file sumbernya, dan katakan terus terang bila informasinya tidak ada di sumber.]\n${blocks.join('\n\n')}`,
+    );
+  }
+  return parts.join('\n\n');
 }
 
 function makeTitle(content: string) {

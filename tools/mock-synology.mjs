@@ -1,6 +1,7 @@
 // Mock Synology DSM Web API untuk development/testing tanpa NAS asli.
 // Meniru: SYNO.API.Info, SYNO.API.Auth (login/logout, 2FA + device token),
-//         SYNO.FileStation.List (list_share, list), Search (start/list/stop/clean), Download, Upload.
+//         SYNO.FileStation.List (list_share, list), Search (start/list/stop/clean), Download, Upload,
+//         SYNO.Finder.FileIndexing.* (Universal Search: nama file + isi file teks di share "proyek").
 //
 // Jalankan: node tools/mock-synology.mjs
 //   PORT=5001 DATA_DIR=./tools/mock-synology-data SID_TTL_SEC=604800
@@ -38,7 +39,12 @@ const API_INFO = {
   'SYNO.FileStation.Search': { path: 'entry.cgi', minVersion: 1, maxVersion: 2 },
   'SYNO.FileStation.Download': { path: 'entry.cgi', minVersion: 1, maxVersion: 2 },
   'SYNO.FileStation.Upload': { path: 'entry.cgi', minVersion: 1, maxVersion: 3 },
+  'SYNO.Finder.FileIndexing.Search': { path: 'entry.cgi', minVersion: 1, maxVersion: 1 },
+  'SYNO.Finder.FileIndexing.Folder': { path: 'entry.cgi', minVersion: 1, maxVersion: 1 },
+  'SYNO.Finder.FileIndexing.Status': { path: 'entry.cgi', minVersion: 1, maxVersion: 1 },
 };
+// Universal Search: share "proyek" diindeks beserta ISI dokumen teks; share lain hanya nama file.
+const CONTENT_INDEXED = ['proyek'];
 
 /** Ubah parameter path DSM (string ber-quote JSON atau polos) menjadi path asli. */
 function parsePathParam(v) {
@@ -178,6 +184,43 @@ http
         searches.delete(parsePathParam(q.taskid));
         return ok(res);
       }
+    }
+
+    // ---------- Universal Search (SYNO.Finder)
+    if (q.api === 'SYNO.Finder.FileIndexing.Status') return ok(res, { status: { index: 'finished', term: 'finished' } });
+    if (q.api === 'SYNO.Finder.FileIndexing.Folder' && q.method === 'list') {
+      return ok(res, { folder: USERS[user].shares.map((n) => ({ path: `/${n}`, name: n, document: CONTENT_INDEXED.includes(n), paused: false })) });
+    }
+    if (q.api === 'SYNO.Finder.FileIndexing.Search' && q.method === 'search') {
+      if (!q.search_weight_list) return json(res, { success: false, error: { code: 120, errors: { name: 'search_weight_list', reason: 'required' } } });
+      const kw = String(parsePathParam(q.keyword) ?? '').toLowerCase();
+      const hits = [];
+      for (const share of USERS[user].shares) {
+        const all = [];
+        walk(user, `/${share}`, /.*/, all);
+        for (const f of all) {
+          const nameHit = f.name.toLowerCase().includes(kw);
+          let contentHit = false;
+          if (!f.isdir && CONTENT_INDEXED.includes(share) && /\.(txt|md|csv)$/i.test(f.name)) {
+            contentHit = fs.readFileSync(path.join(ROOT, '.' + f.path), 'utf8').toLowerCase().includes(kw);
+          }
+          if (nameHit || contentHit) {
+            hits.push({
+              SYNOMDFSName: f.name,
+              SYNOMDSharePath: f.path,
+              SYNOMDPath: `/volume1${f.path}`,
+              SYNOMDIsDir: f.isdir ? 'y' : 'n',
+              SYNOMDFSSize: String(f.additional.size),
+              SYNOMDExtension: f.isdir ? '' : path.extname(f.name).slice(1),
+              additional: { score: nameHit ? 2.5 : 1 },
+              readable: true,
+            });
+          }
+        }
+      }
+      hits.sort((a, b) => b.additional.score - a.additional.score);
+      const from = Number(q.from ?? 0);
+      return ok(res, { has_error: false, total: hits.length, unavail: [], hits: hits.slice(from, from + Number(q.size ?? 50)) });
     }
 
     // ---------- Download

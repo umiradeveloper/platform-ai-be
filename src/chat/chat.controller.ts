@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, HttpException, Param, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { ArrayMaxSize, IsArray, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { AuthUser, CurrentUser } from '../common/auth.decorators';
 import { ChatService, Emit } from './chat.service';
@@ -12,6 +12,12 @@ class SendMessageDto {
   @ApiPropertyOptional() @IsOptional() @IsString() modelId?: string;
   @ApiPropertyOptional({ description: 'Path file Synology yang dilampirkan (maks. 5)', type: [String] })
   @IsOptional() @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) @MaxLength(1024, { each: true }) synologyFiles?: string[];
+  @ApiPropertyOptional({ description: 'Folder Synology yang dilampirkan; dibaca rekursif (maks. 2)', type: [String] })
+  @IsOptional() @IsArray() @ArrayMaxSize(2) @IsString({ each: true }) @MaxLength(1024, { each: true }) synologyFolders?: string[];
+  @ApiPropertyOptional({ description: 'Cari potongan relevan dari basis pengetahuan (RAG) pengguna' })
+  @IsOptional() @IsBoolean() useKnowledge?: boolean;
+  @ApiPropertyOptional({ description: 'Batasi ke folder basis pengetahuan tertentu', type: [String] })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) knowledgeIndexIds?: string[];
 }
 class RegenerateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() modelId?: string;

@@ -1,8 +1,9 @@
 // Mock Hermes Agent API server untuk development/testing tanpa Hermes asli.
 // Meniru: POST /v1/chat/completions (stream & non-stream), event `hermes.tool.progress`,
-// GET /v1/models, GET /v1/capabilities, GET /health.
+// GET /v1/models, GET /v1/capabilities, GET /health, POST /v1/embeddings (vektor hashing sederhana untuk uji RAG).
 // Jalankan: node tools/mock-hermes.mjs   (PORT=8642, API_SERVER_KEY=test-hermes-key)
 import http from 'node:http';
+import crypto from 'node:crypto';
 
 const PORT = Number(process.env.PORT ?? 8642);
 const KEY = process.env.API_SERVER_KEY ?? 'test-hermes-key';
@@ -23,12 +24,27 @@ http
     if (req.method === 'GET' && req.url === '/v1/capabilities') {
       return send(res, 200, { object: 'hermes.api_server.capabilities', platform: 'hermes-agent', model: MODEL, auth_type: 'bearer', auth_required: true, chat_completions: true, chat_completions_streaming: true });
     }
+    if (req.method === 'POST' && req.url === '/v1/embeddings') {
+      let raw = '';
+      for await (const c of req) raw += c;
+      const body = JSON.parse(raw);
+      const inputs = [].concat(body.input);
+      // bag-of-words ter-hash (256 dimensi) + akar kata 5 huruf → kata berimbuhan tetap "mirip"
+      const vec = (t) => {
+        const v = new Array(256).fill(0);
+        for (const w of String(t).toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []) {
+          for (const tok of [w, w.slice(0, 5)]) v[crypto.createHash('md5').update(tok).digest()[0]] += 1;
+        }
+        return v;
+      };
+      return send(res, 200, { object: 'list', model: body.model, data: inputs.map((t, index) => ({ object: 'embedding', index, embedding: vec(t) })) });
+    }
     if (req.method === 'POST' && req.url === '/v1/chat/completions') {
       let raw = '';
       for await (const c of req) raw += c;
       const body = JSON.parse(raw);
       const last = [...body.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
-      const lamp = [...last.matchAll(/<lampiran nama="([^"]+)"[^>]*>([\s\S]*?)<\/lampiran>/g)].map((m) => `${m[1]} (${m[2].length} karakter)`);
+      const lamp = [...last.matchAll(/<(?:lampiran|sumber) nama="([^"]+)"[^>]*>([\s\S]*?)<\/(?:lampiran|sumber)>/g)].map((m) => `${m[1]} (${m[2].length} karakter)`);
       const reply = `**Hermes (mock)** menerima ${body.messages.length} pesan.${lamp.length ? `\n\nLampiran diterima: ${lamp.join(', ')}` : ''}\n\nPesan terakhir Anda: _${last.split('\n')[0].slice(0, 120)}_\n\n\`\`\`ts\nconsole.log('halo dari hermes');\n\`\`\``;
       const id = 'chatcmpl-mock';
       if (!body.stream) {

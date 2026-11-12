@@ -23,6 +23,13 @@ class SearchQuery {
   @ApiProperty() @IsString() @MaxLength(1024) path: string;
   @ApiProperty() @IsString() @MinLength(2) @MaxLength(100) q: string;
 }
+class FolderQuery {
+  @ApiProperty() @IsString() @MaxLength(1024) path: string;
+}
+class ContentSearchQuery {
+  @ApiProperty() @IsString() @MinLength(2) @MaxLength(100) q: string;
+  @ApiPropertyOptional({ description: 'Batasi ke folder ini' }) @IsOptional() @IsString() @MaxLength(1024) path?: string;
+}
 class SaveMessageDto {
   @ApiProperty() @IsString() messageId: string;
   @ApiProperty({ example: '/proyek/Tower B/Laporan' }) @IsString() @MaxLength(1024) folder: string;
@@ -65,6 +72,20 @@ export class SynologyController {
   @Get('search')
   search(@CurrentUser() u: AuthUser, @Query() q: SearchQuery) {
     return this.synology.search(u.id, q.path, q.q);
+  }
+
+  /** Pratinjau lampiran folder (rekursif): jumlah file & daftar yang akan dibaca AI. */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Get('folder-preview')
+  folderPreview(@CurrentUser() u: AuthUser, @Query() q: FolderQuery) {
+    return this.synology.folderPreview(u.id, q.path);
+  }
+
+  /** Cari nama & isi file lewat Universal Search DSM. */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('content-search')
+  contentSearch(@CurrentUser() u: AuthUser, @Query() q: ContentSearchQuery) {
+    return this.synology.contentSearch(u.id, q.q, q.path);
   }
 
   /** Simpan jawaban AI (milik user sendiri) sebagai file Markdown ke folder Synology. */

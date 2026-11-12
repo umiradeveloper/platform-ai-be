@@ -107,6 +107,15 @@ Setiap pengguna bisa menghubungkan **akun DSM Synology miliknya sendiri** di hal
   Pengguna bisa menjelajah folder atau mencari file. Format yang didukung: PDF (teks), DOCX, XLSX, CSV/TSV,
   TXT/MD/JSON/XML/HTML/log. Isi file diekstrak menjadi teks, disimpan bersama pesan, dan dipakai sebagai
   konteks AI, termasuk saat *generate ulang*.
+- **Melampirkan seluruh folder** (maksimal 2 folder per pesan). Subfolder ikut ditelusuri; file terbaru
+  dibaca lebih dulu, maksimal `SYNOLOGY_FOLDER_MAX_FILES` file. AI juga menerima *daftar isi* semua file di
+  folder itu, sehingga tahu file apa saja yang ada walau tidak semuanya dibaca.
+- **Mencari isi dan nama file se-NAS** lewat Universal Search DSM (mode *Isi & nama* di picker). Fitur ini
+  aktif otomatis bila paket Universal Search terpasang. Isi dokumen hanya ikut dicari pada folder yang
+  *Indeks konten file*-nya diaktifkan admin NAS; di folder lain hanya nama file yang dicari.
+- **Basis Pengetahuan (RAG)**: pengguna memilih folder di halaman Profil, lalu Umira mengindeksnya di latar
+  belakang. Di chat, tombol *Basis pengetahuan* membuat AI mencari potongan dokumen yang paling relevan
+  dan menyebut nama file sumbernya. Lihat bagian di bawah.
 - **Menyimpan jawaban AI ke NAS** sebagai file Markdown, lewat tombol simpan di bawah jawaban.
 
 Akses selalu memakai sesi akun DSM pengguna itu sendiri, sehingga Umira hanya bisa membuka folder yang
@@ -120,6 +129,9 @@ memang diizinkan untuk orang tersebut di NAS.
 | `SYNOLOGY_ALLOW_REMEMBER_PASSWORD` | `true` | Mengizinkan opsi "Tetap tersambung" (password DSM disimpan terenkripsi AES-256-GCM) |
 | `SYNOLOGY_MAX_FILE_MB` | `20` | Batas ukuran file yang diunduh |
 | `SYNOLOGY_MAX_CHARS_PER_FILE` | `60000` | Batas teks per file. Sisanya dipotong dan ditandai |
+| `SYNOLOGY_FOLDER_MAX_FILES` | `25` | Lampiran folder: jumlah file maksimal yang dibaca AI |
+| `SYNOLOGY_FOLDER_MAX_CHARS` | `200000` | Lampiran folder: total teks maksimal, dibagi rata ke file yang dibaca |
+| `SYNOLOGY_FOLDER_MAX_SCAN` | `120` | Lampiran folder: jumlah subfolder maksimal yang ditelusuri. Di NAS asli ±250 ms per folder, 4 folder sekaligus, jadi 120 folder ≈ 10 detik |
 
 **Sesi dan 2FA**
 
@@ -138,9 +150,48 @@ memang diizinkan untuk orang tersebut di NAS.
 3. Bila Auto Block aktif, masukkan IP server Umira ke *allow list*, supaya password yang salah beberapa
    kali tidak memblokir semua pengguna.
 
+### Basis Pengetahuan (RAG)
+
+- **Milik per pengguna.** Folder diindeks dengan sesi DSM pengguna itu, dan potongan teksnya hanya bisa
+  dicari olehnya, sehingga tidak ada kebocoran antar hak akses.
+  - Bila folder tidak lagi bisa diakses, isinya dihapus dari indeks.
+  - Bila pengguna memutus Synology, seluruh basis pengetahuannya ikut dihapus.
+- **Inkremental.** Job latar membandingkan ukuran dan waktu ubah tiap file.
+  - Yang diproses ulang hanya file baru atau yang berubah.
+  - File yang sudah dihapus di NAS ikut keluar dari indeks.
+  - Indeks diperbarui otomatis tiap `RAG_REFRESH_HOURS`. Supaya pembaruan latar tetap jalan setelah sesi
+    DSM 7 hari habis, pengguna perlu mencentang *Tetap tersambung*.
+- **Pencarian hibrida.**
+  - MySQL `FULLTEXT` selalu aktif, tanpa server tambahan.
+  - Bila `RAG_EMBEDDING_MODEL` diisi, ditambah kemiripan vektor (cosine).
+  - Kedua hasil digabung dengan *Reciprocal Rank Fusion*.
+  - Vektor disimpan sebagai BLOB di MySQL. Ini cukup sampai puluhan ribu potongan per pengguna; untuk
+    skala lebih besar, pindahkan ke vector DB.
+- PDF hasil scan (tanpa teks) dilewati dan dicatat sebagai "dilewati".
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `RAG_ENABLED` | `true` | `false` untuk mematikan basis pengetahuan |
+| `RAG_EMBEDDING_MODEL` | kosong | Mis. `text-embedding-3-small`. Kosong = pencarian kata kunci saja |
+| `RAG_EMBEDDING_PROVIDER` | kosong | `OPENAI` / `OPENAI_COMPATIBLE` / `HERMES`: pakai base URL dan API key provider itu (dari Dashboard atau env) |
+| `RAG_EMBEDDING_BASE_URL` / `RAG_EMBEDDING_API_KEY` | OpenAI | Endpoint OpenAI-compatible `/embeddings` lain, mis. Ollama `http://127.0.0.1:11434/v1` dengan model `nomic-embed-text` |
+| `RAG_MAX_INDEXES_PER_USER` | `10` | Jumlah folder per pengguna |
+| `RAG_MAX_FILES_PER_INDEX` | `2000` | File maksimal per folder |
+| `RAG_MAX_CHARS_PER_FILE` | `300000` | Teks maksimal yang diindeks per file |
+| `RAG_REFRESH_HOURS` | `24` | Jarak pembaruan otomatis |
+| `RAG_TOP_K` / `RAG_CONTEXT_CHARS` | `8` / `14000` | Jumlah potongan dan total teks yang disisipkan ke pertanyaan |
+
+> Cek dulu apakah Hermes Agent Anda melayani `POST /v1/embeddings`. Bila tidak (API server Hermes fokus
+> ke chat), pakai OpenAI, server OpenAI-compatible, atau Ollama lokal untuk embedding. Bila embedding
+> gagal, pengindeksan tetap jalan dengan kata kunci saja. Mengganti model embedding? Klik *indeks ulang* pada tiap folder:
+> vektor dari model yang berbeda dimensinya diabaikan.
+
 **Testing tanpa NAS:** `node tools/mock-synology.mjs`, lalu set `SYNOLOGY_URL=http://127.0.0.1:5001`.
 Akun tiruan: `rina`/`rina123` dan `budi`/`budi123` (2FA, OTP `123456`). Data dibaca dari
 `tools/mock-synology-data/`.
+- Mock ini juga meniru Universal Search: share `proyek` diindeks beserta isinya.
+- `tools/mock-hermes.mjs` menyediakan `/v1/embeddings` tiruan. Untuk menguji RAG semantik, set
+  `RAG_EMBEDDING_PROVIDER=HERMES` dan `RAG_EMBEDDING_MODEL=mock-embed`.
 
 ## Integrasi Hermes Agent
 
@@ -178,7 +229,8 @@ hermes gateway
 | Model | `GET /models` · admin: `GET/POST /admin/models`, `PATCH/DELETE /admin/models/:id` |
 | Admin | `/admin/dashboard` · `users` · `providers` (+ `/:type/test`) · `usage` · `costs` · `audit-logs` · `settings` |
 | Usage | `GET /usage/me` |
-| Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `POST /synology/save-message` · lampiran: `synologyFiles[]` pada `POST /chat/completions(/stream)` |
+| Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `GET /synology/folder-preview?path=`, `GET /synology/content-search?q=&path=`, `POST /synology/save-message` · pada `POST /chat/completions(/stream)`: `synologyFiles[]`, `synologyFolders[]`, `useKnowledge`, `knowledgeIndexIds[]` |
+| Basis pengetahuan | `GET/POST /knowledge`, `POST /knowledge/:id/reindex`, `PATCH/DELETE /knowledge/:id`, `GET /knowledge/search?q=` |
 
 Event SSE: `meta`, `title`, `delta {text}`, `tool {tool,label,status}`, `fallback`, `done`, `error`.
 Dokumentasi interaktif tersedia di `/api/docs`, dan metrik Prometheus di `/metrics` (lihat
@@ -194,6 +246,7 @@ src/
 prisma/        schema.prisma, migrations/, seed.ts
 scripts/       setup-mac.sh, setup-ubuntu.sh, init-env.mjs
 deploy/        nginx-api.conf, prometheus.yml
-synology/      (di src/) klien DSM API, ekstraksi teks file, endpoint per pengguna
+synology/      (di src/) klien DSM API (File Station + Universal Search), ekstraksi teks file, endpoint per pengguna
+knowledge/     (di src/) basis pengetahuan RAG: pengindeks latar, chunking, embedding, pencarian hibrida
 tools/         mock-hermes.mjs, mock-synology.mjs
 ```

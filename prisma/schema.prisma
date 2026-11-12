@@ -62,6 +62,7 @@ model User {
   passwordResets     PasswordResetToken[]
   auditLogs          AuditLog[]
   synologyLink       SynologyLink?
+  knowledgeIndexes   KnowledgeIndex[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 }
@@ -248,4 +249,62 @@ model SystemSetting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------- Basis pengetahuan (RAG)
+// Folder Synology yang diindeks MILIK SATU USER, dibaca dengan sesi DSM user itu sendiri.
+// Potongan teksnya hanya bisa dicari oleh user yang sama → tidak ada kebocoran antar hak akses.
+
+model KnowledgeIndex {
+  id            String           @id @default(cuid())
+  userId        String
+  path          String           @db.VarChar(1024)
+  pathHash      String           @db.Char(64) // sha256(path) — unik per user (path terlalu panjang untuk index)
+  name          String           @db.VarChar(512)
+  status        String           @default("queued") // queued | indexing | ready | error
+  progress      Int              @default(0) // 0–100 saat indexing
+  fileCount     Int              @default(0)
+  chunkCount    Int              @default(0)
+  skippedCount  Int              @default(0)
+  error         String?          @db.Text
+  autoRefresh   Boolean          @default(true)
+  lastIndexedAt DateTime?
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files         KnowledgeFile[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([userId, pathHash])
+  @@index([status])
+}
+
+model KnowledgeFile {
+  id         String           @id @default(cuid())
+  indexId    String
+  path       String           @db.VarChar(1024)
+  name       String           @db.VarChar(512)
+  size       Int              @default(0)
+  mtime      Int              @default(0)
+  status     String           @default("ok") // ok | skipped | error
+  note       String?          @db.VarChar(512)
+  chunkCount Int              @default(0)
+  index      KnowledgeIndex   @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  chunks     KnowledgeChunk[]
+
+  @@index([indexId])
+}
+
+model KnowledgeChunk {
+  id        String        @id @default(cuid())
+  fileId    String
+  indexId   String
+  userId    String
+  ordinal   Int
+  text      String        @db.Text
+  embedding Bytes?        @db.MediumBlob // Float32Array; null bila embedding tidak dikonfigurasi
+  file      KnowledgeFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([userId, indexId])
+  @@index([fileId])
+  @@fulltext([text])
 }

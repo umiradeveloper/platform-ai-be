@@ -1,0 +1,5 @@
+SOP PENERIMAAN MATERIAL GUDANG CIKARANG
+1. Cek surat jalan dan PO.
+2. Inspeksi visual & hitung jumlah.
+3. Material besi wajib disertai mill certificate.
+4. Input ke sistem paling lambat 1x24 jam.

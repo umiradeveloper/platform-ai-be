@@ -10,6 +10,9 @@ import { AuthService } from './auth/auth.service';
 import { SuperAppsService } from './auth/superapps.service';
 import { SynologyController } from './synology/synology.controller';
 import { SynologyService } from './synology/synology.service';
+import { KnowledgeController } from './knowledge/knowledge.controller';
+import { KnowledgeService } from './knowledge/knowledge.service';
+import { EmbeddingService } from './knowledge/embedding.service';
 import { ChatController } from './chat/chat.controller';
 import { ChatService } from './chat/chat.service';
 import { AuditModule } from './common/audit.service';
@@ -83,11 +86,14 @@ class HealthController {
     UsageController,
     AdminController,
     SynologyController,
+    KnowledgeController,
   ],
   providers: [
     AuthService,
     SuperAppsService,
     SynologyService,
+    EmbeddingService,
+    KnowledgeService,
     ChatService,
     UsageService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
