@@ -166,7 +166,7 @@ http
         return ok(res, { taskid });
       }
       if (q.method === 'list') {
-        const t = searches.get(q.taskid);
+        const t = searches.get(parsePathParam(q.taskid));
         if (!t) return err(res, 401);
         t.polls++;
         const finished = t.polls >= 2; // meniru pencarian bertahap
@@ -175,7 +175,7 @@ http
       }
       if (q.method === 'stop') return ok(res);
       if (q.method === 'clean') {
-        searches.delete(q.taskid);
+        searches.delete(parsePathParam(q.taskid));
         return ok(res);
       }
     }

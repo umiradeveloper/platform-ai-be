@@ -116,6 +116,7 @@ memang diizinkan untuk orang tersebut di NAS.
 |---|---|---|
 | `SYNOLOGY_URL` | kosong (nonaktif) | URL DSM, mis. `https://nas.umira.id:5001` |
 | `SYNOLOGY_VERIFY_TLS` | `true` | `false` hanya untuk sertifikat self-signed di jaringan internal |
+| `SYNOLOGY_SESSION` | `FileStation` | Isi `SynologyDrive` bila URL-nya portal aplikasi Synology Drive (mis. `https://drive.simumira.com`). Bila kosong, Umira beralih otomatis saat DSM membalas error 405 |
 | `SYNOLOGY_ALLOW_REMEMBER_PASSWORD` | `true` | Mengizinkan opsi "Tetap tersambung" (password DSM disimpan terenkripsi AES-256-GCM) |
 | `SYNOLOGY_MAX_FILE_MB` | `20` | Batas ukuran file yang diunduh |
 | `SYNOLOGY_MAX_CHARS_PER_FILE` | `60000` | Batas teks per file. Sisanya dipotong dan ditandai |

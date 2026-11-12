@@ -31,7 +31,7 @@ export class SynologyService {
     private readonly audit: AuditService,
   ) {
     const url = process.env.SYNOLOGY_URL?.trim();
-    this.client = url ? new SynologyClient(url, process.env.SYNOLOGY_VERIFY_TLS !== 'false') : null;
+    this.client = url ? new SynologyClient(url, process.env.SYNOLOGY_VERIFY_TLS !== 'false', process.env.SYNOLOGY_SESSION) : null;
     if (this.client) this.logger.log(`Integrasi Synology aktif → ${this.client.baseUrl}`);
   }
 

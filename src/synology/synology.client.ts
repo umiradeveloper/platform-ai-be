@@ -39,6 +39,7 @@ const AUTH_ERRORS: Record<number, [SynologyErrorKind, string]> = {
   402: ['permission', 'Akun Synology tidak punya izin memakai File Station.'],
   403: ['otp_required', 'Akun ini memakai verifikasi 2 langkah — masukkan kode OTP.'],
   404: ['otp_invalid', 'Kode OTP salah atau kedaluwarsa.'],
+  405: ['other', 'DSM menolak jenis sesi login ini untuk alamat tersebut (portal aplikasi). Atur SYNOLOGY_SESSION.'],
   406: ['otp_required', 'Akun ini wajib verifikasi 2 langkah — masukkan kode OTP.'],
   407: ['blocked', 'Alamat IP server Umira diblokir oleh Synology (auto block). Hubungi admin NAS.'],
   408: ['password_expired', 'Password Synology kedaluwarsa. Ganti password di DSM terlebih dahulu.'],
@@ -82,12 +83,20 @@ export class SynologyClient {
   private info: Record<string, ApiInfo> | null = null;
   private infoAt = 0;
   private readonly dispatcher?: Agent;
+  /**
+   * Nama sesi login DSM. Default "FileStation". Bila SYNOLOGY_URL adalah portal aplikasi
+   * (mis. domain khusus Synology Drive seperti drive.simumira.com), DSM hanya menerima sesi
+   * aplikasi itu ("SynologyDrive") dan menolak sesi lain dengan error 405 — klien otomatis beralih.
+   */
+  session: string;
 
   constructor(
     readonly baseUrl: string,
     verifyTls = true,
+    session?: string,
   ) {
     this.baseUrl = baseUrl.trim().replace(/\/+$/, '');
+    this.session = session?.trim() || 'FileStation';
     if (!verifyTls) this.dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
   }
 
@@ -141,28 +150,34 @@ export class SynologyClient {
   async login(account: string, password: string, opts: { otp?: string; deviceId?: string } = {}): Promise<{ sid: string; deviceId?: string }> {
     const info = await this.api('SYNO.API.Auth');
     const version = Math.min(info.maxVersion, 6); // v6+: device token untuk 2FA
-    const data = await this.call(
-      'SYNO.API.Auth',
-      'login',
-      version,
-      {
+    const attempt = (session: string) =>
+      this.call('SYNO.API.Auth', 'login', version, {
         account,
         passwd: password,
-        session: 'FileStation',
+        session,
         format: 'sid',
         otp_code: opts.otp || undefined,
         enable_device_token: opts.otp ? 'yes' : undefined,
         device_name: opts.otp || opts.deviceId ? 'Umira AI' : undefined,
         device_id: opts.deviceId || undefined,
-      },
-    );
+      });
+    let data: any;
+    try {
+      data = await attempt(this.session);
+    } catch (e) {
+      // 405 = sesi tidak diizinkan di portal ini → coba sesi Synology Drive sekali, lalu ingat pilihannya.
+      if (!(e instanceof SynologyError) || e.code !== 405 || this.session === 'SynologyDrive') throw e;
+      this.logger.warn('DSM menolak sesi "FileStation" (405) — beralih ke sesi "SynologyDrive" (portal aplikasi Drive).');
+      data = await attempt('SynologyDrive');
+      this.session = 'SynologyDrive';
+    }
     if (!data.sid) throw new SynologyError('other', 'Login Synology tidak mengembalikan sesi.');
     return { sid: data.sid, deviceId: data.did || data.device_id || undefined };
   }
 
   async logout(sid: string) {
     try {
-      await this.call('SYNO.API.Auth', 'logout', 1, { session: 'FileStation' }, sid);
+      await this.call('SYNO.API.Auth', 'logout', 1, { session: this.session }, sid);
     } catch {
       /* abaikan */
     }
@@ -189,7 +204,9 @@ export class SynologyClient {
   /** Pencarian rekursif: start → polling list sampai selesai (maks ~10 detik) → stop & clean. */
   async search(sid: string, folder: string, pattern: string, limit = 100): Promise<{ files: SynoFile[]; finished: boolean }> {
     const start = await this.call('SYNO.FileStation.Search', 'start', 2, { folder_path: JSON.stringify([folder]), pattern, recursive: true }, sid);
-    const taskid = start.taskid;
+    // DSM 7 (requestFormat JSON): taskid wajib dikirim sebagai string JSON ber-kutip,
+    // jika tidak, taskid seperti "1794471958DA9543FB" bisa terbaca keliru dan hasil kosong.
+    const taskid = JSON.stringify(String(start.taskid));
     let files: SynoFile[] = [];
     let finished = false;
     try {
