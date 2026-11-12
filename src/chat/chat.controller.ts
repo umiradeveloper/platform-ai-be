@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, HttpException, Param, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { AuthUser, CurrentUser } from '../common/auth.decorators';
 import { ChatService, Emit } from './chat.service';
@@ -10,6 +10,8 @@ class SendMessageDto {
   @ApiPropertyOptional({ description: 'Kosongkan untuk membuat percakapan baru' }) @IsOptional() @IsString() conversationId?: string;
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(200_000) content: string;
   @ApiPropertyOptional() @IsOptional() @IsString() modelId?: string;
+  @ApiPropertyOptional({ description: 'Path file Synology yang dilampirkan (maks. 5)', type: [String] })
+  @IsOptional() @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) @MaxLength(1024, { each: true }) synologyFiles?: string[];
 }
 class RegenerateDto {
   @ApiPropertyOptional() @IsOptional() @IsString() modelId?: string;

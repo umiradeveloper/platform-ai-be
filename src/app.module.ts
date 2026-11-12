@@ -8,6 +8,8 @@ import { AdminController } from './admin/admin.controller';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
 import { SuperAppsService } from './auth/superapps.service';
+import { SynologyController } from './synology/synology.controller';
+import { SynologyService } from './synology/synology.service';
 import { ChatController } from './chat/chat.controller';
 import { ChatService } from './chat/chat.service';
 import { AuditModule } from './common/audit.service';
@@ -31,6 +33,7 @@ class HealthController {
     private readonly redis: RedisService,
     private readonly settings: SettingsService,
     private readonly superapps: SuperAppsService,
+    private readonly synology: SynologyService,
   ) {}
 
   @Public()
@@ -48,7 +51,7 @@ class HealthController {
   async config() {
     const s = await this.settings.get();
     const hasUsers = (await this.prisma.user.count()) > 0;
-    return { appName: s.appName, allowRegistration: s.allowRegistration || !hasUsers, superappsLogin: this.superapps.enabled };
+    return { appName: s.appName, allowRegistration: s.allowRegistration || !hasUsers, superappsLogin: this.superapps.enabled, synology: this.synology.enabled };
   }
 }
 
@@ -79,10 +82,12 @@ class HealthController {
     ModelsController,
     UsageController,
     AdminController,
+    SynologyController,
   ],
   providers: [
     AuthService,
     SuperAppsService,
+    SynologyService,
     ChatService,
     UsageService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },

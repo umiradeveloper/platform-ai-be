@@ -11,6 +11,7 @@ import { AIModel, Prisma } from '@prisma/client';
 import Redis from 'ioredis';
 import { PrismaService } from '../common/prisma.service';
 import { RedisService } from '../common/redis.service';
+import { ExtractedFile, SynologyService } from '../synology/synology.service';
 import { AuthUser } from '../common/auth.decorators';
 import { SettingsService } from '../settings/settings.service';
 import { ProviderRegistry } from '../providers/provider.registry';
@@ -48,6 +49,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     private readonly settings: SettingsService,
     private readonly providers: ProviderRegistry,
     private readonly redis: RedisService,
+    private readonly synology: SynologyService,
   ) {}
 
   onModuleInit() {
@@ -127,16 +129,17 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       where: { conversationId, isError: false },
       orderBy: { createdAt: 'desc' },
       take: s.maxHistoryMessages,
-      select: { role: true, content: true },
+      select: { role: true, content: true, attachments: { select: { name: true, path: true, text: true, truncated: true } } },
     });
     const budget = Math.max(2000, model.maxContextTokens - model.maxOutputTokens - estimateTokens(s.systemPrompt) - 500);
     const picked: ChatMessageInput[] = [];
     let used = 0;
     for (const m of history) {
-      const t = estimateTokens(m.content);
+      const content = withAttachments(m.content, m.attachments);
+      const t = estimateTokens(content);
       if (picked.length > 0 && used + t > budget) break;
       used += t;
-      picked.unshift({ role: m.role === 'ASSISTANT' ? 'assistant' : m.role === 'SYSTEM' ? 'system' : 'user', content: m.content });
+      picked.unshift({ role: m.role === 'ASSISTANT' ? 'assistant' : m.role === 'SYSTEM' ? 'system' : 'user', content });
     }
     const system = `${s.systemPrompt}\n\nTanggal hari ini: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full', timeZone: 'Asia/Jakarta' })}.`;
     return [{ role: 'system', content: system }, ...picked];
@@ -145,7 +148,12 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
   // ---------------------------------------------------------------- entry points
 
   /** CHAT-01..04: kirim pesan baru (membuat percakapan bila belum ada). */
-  async send(user: AuthUser, input: { conversationId?: string; content: string; modelId?: string }, emit: Emit, signal?: AbortSignal) {
+  async send(
+    user: AuthUser,
+    input: { conversationId?: string; content: string; modelId?: string; synologyFiles?: string[] },
+    emit: Emit,
+    signal?: AbortSignal,
+  ) {
     const s = await this.settings.get();
     const content = input.content.trim();
     if (!content) throw new BadRequestException('Pesan tidak boleh kosong');
@@ -155,12 +163,29 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     let conv = input.conversationId ? await this.ownConversation(user.id, input.conversationId) : null;
     if (conv && this.active.has(conv.id)) throw new BadRequestException('AI masih menjawab di percakapan ini. Hentikan dulu atau tunggu selesai.');
     const model = await this.pickModel(input.modelId, conv?.modelId);
-    if (!conv) conv = await this.prisma.conversation.create({ data: { userId: user.id, modelId: model.id } });
 
+    // Lampiran dari Synology: diunduh & diekstrak dengan hak akses user — gagal di sini = HTTP error biasa.
+    const files: ExtractedFile[] = [];
+    for (const p of [...new Set(input.synologyFiles ?? [])]) files.push(await this.synology.extract(user.id, p));
+
+    if (!conv) conv = await this.prisma.conversation.create({ data: { userId: user.id, modelId: model.id } });
     const userMsg = await this.prisma.message.create({
-      data: { conversationId: conv.id, role: 'USER', content, inputTokens: estimateTokens(content) },
+      data: {
+        conversationId: conv.id,
+        role: 'USER',
+        content,
+        inputTokens: estimateTokens(withAttachments(content, files)),
+        attachments: files.length
+          ? { create: files.map((f) => ({ source: 'synology', path: f.path, name: f.name, mimeType: f.mimeType, size: f.size, text: f.text, truncated: f.truncated })) }
+          : undefined,
+      },
     });
-    emit('meta', { conversationId: conv.id, userMessageId: userMsg.id, model: this.modelInfo(model) });
+    emit('meta', {
+      conversationId: conv.id,
+      userMessageId: userMsg.id,
+      model: this.modelInfo(model),
+      attachments: files.map((f) => ({ name: f.name, path: f.path, size: f.size, truncated: f.truncated })),
+    });
 
     if (conv.title === 'New Chat' && s.autoTitle) {
       const title = makeTitle(content);
@@ -367,6 +392,16 @@ export function looksLikeRawToolCall(text: string): boolean {
   } catch {
     return /^\{\s*"name"\s*:\s*"[\w.-]+"\s*,\s*"(parameters|arguments)"\s*:/.test(t);
   }
+}
+
+/** Gabungkan isi file lampiran ke pesan user agar terbaca model (format jelas, dengan batas file). */
+function withAttachments(content: string, files: { name: string; path: string; text: string; truncated: boolean }[]) {
+  if (!files?.length) return content;
+  const blocks = files.map(
+    (f) =>
+      `<lampiran nama="${f.name}" sumber="Synology" path="${f.path}"${f.truncated ? ' terpotong="ya"' : ''}>\n${f.text}\n</lampiran>`,
+  );
+  return `${content}\n\n[Pengguna melampirkan ${files.length} file dari Synology. Gunakan isinya untuk menjawab.]\n${blocks.join('\n\n')}`;
 }
 
 function makeTitle(content: string) {

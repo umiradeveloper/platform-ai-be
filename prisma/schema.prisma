@@ -61,6 +61,7 @@ model User {
   refreshTokens      RefreshToken[]
   passwordResets     PasswordResetToken[]
   auditLogs          AuditLog[]
+  synologyLink       SynologyLink?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 }
@@ -117,9 +118,43 @@ model Message {
   isError        Boolean      @default(false)
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   model          AIModel?     @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  attachments    MessageAttachment[]
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
+}
+
+/// File yang dilampirkan ke pesan (mis. dari Synology). Teks hasil ekstraksi disimpan agar
+/// tetap menjadi konteks AI di giliran berikutnya / saat regenerate.
+model MessageAttachment {
+  id         String   @id @default(cuid())
+  messageId  String
+  source     String   // "synology"
+  path       String   @db.VarChar(1024)
+  name       String   @db.VarChar(512)
+  mimeType   String?
+  size       Int      @default(0)
+  text       String   @db.LongText
+  truncated  Boolean  @default(false)
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([messageId])
+}
+
+/// Koneksi akun Synology (DSM) milik tiap pengguna. Semua secret terenkripsi AES-256-GCM.
+model SynologyLink {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  account            String
+  sidEncrypted       String?   @db.Text
+  deviceIdEncrypted  String?   @db.Text  // device token 2FA ("ingat perangkat ini")
+  passwordEncrypted  String?   @db.Text  // hanya bila pengguna memilih "tetap tersambung"
+  status             String    @default("connected") // connected | expired
+  lastUsedAt         DateTime?
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 model ProviderConfig {

@@ -99,6 +99,48 @@ SUPERAPPS_DB_URL=mysql://umira_ai_ro:<password-kuat>@<host-superapps>:<port>/sup
 
 Restart backend, lalu cek `GET /api/v1/health`. Hasilnya harus menunjukkan `"superapps":"ok"`.
 
+## Synology NAS (per pengguna)
+
+Setiap pengguna bisa menghubungkan **akun DSM Synology miliknya sendiri** di halaman Profil, lalu:
+
+- **Melampirkan file NAS ke chat** (maksimal 5 file per pesan) lewat tombol *Synology* di kotak chat.
+  Pengguna bisa menjelajah folder atau mencari file. Format yang didukung: PDF (teks), DOCX, XLSX, CSV/TSV,
+  TXT/MD/JSON/XML/HTML/log. Isi file diekstrak menjadi teks, disimpan bersama pesan, dan dipakai sebagai
+  konteks AI, termasuk saat *generate ulang*.
+- **Menyimpan jawaban AI ke NAS** sebagai file Markdown, lewat tombol simpan di bawah jawaban.
+
+Akses selalu memakai sesi akun DSM pengguna itu sendiri, sehingga Umira hanya bisa membuka folder yang
+memang diizinkan untuk orang tersebut di NAS.
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `SYNOLOGY_URL` | kosong (nonaktif) | URL DSM, mis. `https://nas.umira.id:5001` |
+| `SYNOLOGY_VERIFY_TLS` | `true` | `false` hanya untuk sertifikat self-signed di jaringan internal |
+| `SYNOLOGY_ALLOW_REMEMBER_PASSWORD` | `true` | Mengizinkan opsi "Tetap tersambung" (password DSM disimpan terenkripsi AES-256-GCM) |
+| `SYNOLOGY_MAX_FILE_MB` | `20` | Batas ukuran file yang diunduh |
+| `SYNOLOGY_MAX_CHARS_PER_FILE` | `60000` | Batas teks per file. Sisanya dipotong dan ditandai |
+
+**Sesi dan 2FA**
+
+- Login memakai `SYNO.API.Auth` dengan `session=FileStation`. Yang disimpan adalah *sid* terenkripsi,
+  bukan password, kecuali pengguna mencentang **Tetap tersambung**.
+- Sesi DSM berlaku sekitar 7 hari (default DSM). Setelah itu:
+  - pengguna dengan opsi *Tetap tersambung* disambung ulang otomatis;
+  - pengguna lain diminta menghubungkan ulang.
+- Akun ber-2FA diminta kode OTP sekali. Perangkat Umira lalu diingat lewat *device token*, sehingga OTP
+  tidak diminta lagi saat menyambung ulang.
+
+**Persiapan di NAS:**
+1. File Station aktif, dan akun karyawan punya izin aplikasi File Station.
+2. Server backend Umira bisa menjangkau port DSM (5001/HTTPS). Lewat LAN/VPN lebih baik daripada
+   membukanya ke internet.
+3. Bila Auto Block aktif, masukkan IP server Umira ke *allow list*, supaya password yang salah beberapa
+   kali tidak memblokir semua pengguna.
+
+**Testing tanpa NAS:** `node tools/mock-synology.mjs`, lalu set `SYNOLOGY_URL=http://127.0.0.1:5001`.
+Akun tiruan: `rina`/`rina123` dan `budi`/`budi123` (2FA, OTP `123456`). Data dibaca dari
+`tools/mock-synology-data/`.
+
 ## Integrasi Hermes Agent
 
 `src/providers/hermes.adapter.ts` memanggil `POST {HERMES_BASE_URL}/chat/completions` (streaming) dengan
@@ -135,6 +177,7 @@ hermes gateway
 | Model | `GET /models` · admin: `GET/POST /admin/models`, `PATCH/DELETE /admin/models/:id` |
 | Admin | `/admin/dashboard` · `users` · `providers` (+ `/:type/test`) · `usage` · `costs` · `audit-logs` · `settings` |
 | Usage | `GET /usage/me` |
+| Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `POST /synology/save-message` · lampiran: `synologyFiles[]` pada `POST /chat/completions(/stream)` |
 
 Event SSE: `meta`, `title`, `delta {text}`, `tool {tool,label,status}`, `fallback`, `done`, `error`.
 Dokumentasi interaktif tersedia di `/api/docs`, dan metrik Prometheus di `/metrics` (lihat
@@ -150,5 +193,6 @@ src/
 prisma/        schema.prisma, migrations/, seed.ts
 scripts/       setup-mac.sh, setup-ubuntu.sh, init-env.mjs
 deploy/        nginx-api.conf, prometheus.yml
-tools/         mock-hermes.mjs
+synology/      (di src/) klien DSM API, ekstraksi teks file, endpoint per pengguna
+tools/         mock-hermes.mjs, mock-synology.mjs
 ```

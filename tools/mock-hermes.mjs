@@ -28,7 +28,8 @@ http
       for await (const c of req) raw += c;
       const body = JSON.parse(raw);
       const last = [...body.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
-      const reply = `**Hermes (mock)** menerima ${body.messages.length} pesan.\n\nPesan terakhir Anda: _${last.slice(0, 120)}_\n\n\`\`\`ts\nconsole.log('halo dari hermes');\n\`\`\``;
+      const lamp = [...last.matchAll(/<lampiran nama="([^"]+)"[^>]*>([\s\S]*?)<\/lampiran>/g)].map((m) => `${m[1]} (${m[2].length} karakter)`);
+      const reply = `**Hermes (mock)** menerima ${body.messages.length} pesan.${lamp.length ? `\n\nLampiran diterima: ${lamp.join(', ')}` : ''}\n\nPesan terakhir Anda: _${last.split('\n')[0].slice(0, 120)}_\n\n\`\`\`ts\nconsole.log('halo dari hermes');\n\`\`\``;
       const id = 'chatcmpl-mock';
       if (!body.stream) {
         return send(res, 200, { id, object: 'chat.completion', model: MODEL, choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }], usage: { prompt_tokens: 42, completion_tokens: 30, total_tokens: 72 } });
