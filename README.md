@@ -116,6 +116,8 @@ Setiap pengguna bisa menghubungkan **akun DSM Synology miliknya sendiri** di hal
 - **Basis Pengetahuan (RAG)**: pengguna memilih folder di halaman Profil, lalu Umira mengindeksnya di latar
   belakang. Di chat, tombol *Basis pengetahuan* membuat AI mencari potongan dokumen yang paling relevan
   dan menyebut nama file sumbernya. Lihat bagian di bawah.
+- **Mengunduh file asli dari chat.** Klik chip lampiran atau sumber basis pengetahuan. Semua jenis file
+  didukung, dan hak akses tetap diatur DSM.
 - **Menyimpan jawaban AI ke NAS** sebagai file Markdown, lewat tombol simpan di bawah jawaban.
 
 Akses selalu memakai sesi akun DSM pengguna itu sendiri, sehingga Umira hanya bisa membuka folder yang
@@ -129,6 +131,7 @@ memang diizinkan untuk orang tersebut di NAS.
 | `SYNOLOGY_ALLOW_REMEMBER_PASSWORD` | `true` | Mengizinkan opsi "Tetap tersambung" (password DSM disimpan terenkripsi AES-256-GCM) |
 | `SYNOLOGY_MAX_FILE_MB` | `20` | Batas ukuran file yang diunduh |
 | `SYNOLOGY_MAX_CHARS_PER_FILE` | `60000` | Batas teks per file. Sisanya dipotong dan ditandai |
+| `SYNOLOGY_MAX_DOWNLOAD_MB` | `100` | Batas unduh file asli dari NAS lewat chat (semua jenis file) |
 | `SYNOLOGY_FOLDER_MAX_FILES` | `25` | Lampiran folder: jumlah file maksimal yang dibaca AI |
 | `SYNOLOGY_FOLDER_MAX_CHARS` | `200000` | Lampiran folder: total teks maksimal, dibagi rata ke file yang dibaca |
 | `SYNOLOGY_FOLDER_MAX_SCAN` | `120` | Lampiran folder: jumlah subfolder maksimal yang ditelusuri. Di NAS asli ±250 ms per folder, 4 folder sekaligus, jadi 120 folder ≈ 10 detik |
@@ -278,7 +281,7 @@ Nginx dengan HTTPS.
 | Model | `GET /models` · admin: `GET/POST /admin/models`, `PATCH/DELETE /admin/models/:id` |
 | Admin | `/admin/dashboard` · `users` · `providers` (+ `/:type/test`) · `usage` · `costs` · `audit-logs` · `settings` |
 | Usage | `GET /usage/me` |
-| Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `GET /synology/folder-preview?path=`, `GET /synology/content-search?q=&path=`, `POST /synology/save-message` · pada `POST /chat/completions(/stream)`: `synologyFiles[]`, `synologyFolders[]`, `useKnowledge`, `knowledgeIndexIds[]` |
+| Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `GET /synology/download?path=` (unduh file asli, semua jenis), `GET /synology/folder-preview?path=`, `GET /synology/content-search?q=&path=`, `POST /synology/save-message` · pada `POST /chat/completions(/stream)`: `synologyFiles[]`, `synologyFolders[]`, `useKnowledge`, `knowledgeIndexIds[]` |
 | File Hermes | `GET /files/:id` (`?inline=1` untuk pratinjau) · `POST /files/:id/save-to-synology` |
 | Basis pengetahuan | `GET/POST /knowledge`, `POST /knowledge/:id/reindex`, `PATCH/DELETE /knowledge/:id`, `GET /knowledge/search?q=` |
 

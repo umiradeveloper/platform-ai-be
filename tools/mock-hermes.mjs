@@ -64,7 +64,13 @@ http
         } catch {
           /* repo frontend tidak ada — lewati gambar */
         }
-        media = `\n\nFile sudah saya buat:\n\nMEDIA:${md}\nMEDIA:${csv}${fs.existsSync(png) ? `\nMEDIA:${png}` : ''}`;
+        // jenis file tak umum: tanpa ekstensi & biner
+        const mk = `${outDir}/Makefile`;
+        const dwg = `${outDir}/denah-${stamp}.dwg`;
+        fs.writeFileSync(mk, 'build:\n\techo umira\n');
+        fs.writeFileSync(dwg, Buffer.from([0x41, 0x43, 0x31, 0x30, 0x33, 0x32, 0, 1, 2, 3, 255]));
+        media += `\nMEDIA:${mk}\nMEDIA:${dwg}`;
+        media = `\n\nFile sudah saya buat:\n\nMEDIA:${md}\nMEDIA:${csv}${fs.existsSync(png) ? `\nMEDIA:${png}` : ''}${media}`;
       }
       const reply = `**Hermes (mock)** menerima ${body.messages.length} pesan.${lamp.length ? `\n\nLampiran diterima: ${lamp.join(', ')}` : ''}\n\nPesan terakhir Anda: _${last.split('\n')[0].slice(0, 120)}_\n\n\`\`\`ts\nconsole.log('halo dari hermes');\n\`\`\`${media}`;
       const id = 'chatcmpl-mock';

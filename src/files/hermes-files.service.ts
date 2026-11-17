@@ -44,6 +44,59 @@ const MIME: Record<string, string> = {
   ogg: 'audio/ogg',
   mp4: 'video/mp4',
   zip: 'application/zip',
+  rar: 'application/vnd.rar',
+  '7z': 'application/x-7z-compressed',
+  tar: 'application/x-tar',
+  gz: 'application/gzip',
+  odt: 'application/vnd.oasis.opendocument.text',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  odp: 'application/vnd.oasis.opendocument.presentation',
+  ppt: 'application/vnd.ms-powerpoint',
+  rtf: 'application/rtf',
+  epub: 'application/epub+zip',
+  ics: 'text/calendar',
+  vcf: 'text/vcard',
+  log: 'text/plain',
+  ini: 'text/plain',
+  env: 'text/plain',
+  toml: 'text/plain',
+  css: 'text/css',
+  scss: 'text/plain',
+  java: 'text/plain',
+  kt: 'text/plain',
+  go: 'text/plain',
+  rs: 'text/plain',
+  php: 'text/plain',
+  rb: 'text/plain',
+  c: 'text/plain',
+  cpp: 'text/plain',
+  h: 'text/plain',
+  cs: 'text/plain',
+  swift: 'text/plain',
+  dart: 'text/plain',
+  vue: 'text/plain',
+  tsx: 'text/plain',
+  jsx: 'text/plain',
+  ipynb: 'application/json',
+  dwg: 'image/vnd.dwg',
+  dxf: 'image/vnd.dxf',
+  bmp: 'image/bmp',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  ico: 'image/x-icon',
+  heic: 'image/heic',
+  m4a: 'audio/mp4',
+  flac: 'audio/flac',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska',
+  ttf: 'font/ttf',
+  otf: 'font/otf',
+  woff2: 'font/woff2',
+  apk: 'application/vnd.android.package-archive',
+  exe: 'application/octet-stream',
+  bin: 'application/octet-stream',
 };
 
 export function mimeFor(name: string) {
@@ -79,6 +132,7 @@ export class HermesFilesService {
   readonly relayUrl = (process.env.HERMES_FILES_RELAY_URL ?? '').trim().replace(/\/+$/, '');
   readonly relayKey = process.env.HERMES_FILES_RELAY_KEY ?? '';
   readonly mode: 'off' | 'local' | 'relay';
+  /** folder penyimpanan salinan (dipakai juga untuk ZIP percakapan) */
   readonly storageDir = path.resolve(process.env.GENERATED_FILES_DIR || 'storage/generated');
   readonly maxBytes = env('HERMES_FILE_MAX_MB', 50) * 1024 * 1024;
   readonly maxPerMessage = env('HERMES_FILE_MAX_PER_MESSAGE', 10);
@@ -104,23 +158,41 @@ export class HermesFilesService {
     ].join('\n');
   }
 
-  /** Cari path file di jawaban: baris `MEDIA:` + path di dalam folder output (juga dari label tool). */
+  /**
+   * Cari path file di jawaban. Semua jenis file diterima:
+   *  - baris `MEDIA:` → apa pun ekstensinya (termasuk tanpa ekstensi, mis. Makefile)
+   *  - path di dalam folder output yang disebut di teks / label tool → harus berekstensi
+   *    (supaya penyebutan folder tidak dianggap file)
+   */
   extractRefs(text: string, extra: string[] = []): string[] {
     if (!this.enabled) return [];
-    const found: string[] = [];
     const clean = (p: string) => p.trim().replace(/^[`'"<(]+|[`'">),.;:]+$/g, '');
-    for (const m of text.matchAll(/^[ \t>*-]*MEDIA:\s*(.+?)\s*$/gm)) found.push(clean(m[1]));
+    const explicit = [...text.matchAll(/^[ \t>*-]*MEDIA:\s*(.+?)\s*$/gm)].map((m) => clean(m[1]));
     const esc = this.outputDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`${esc}/[^\\s\`'"<>()\\[\\]{}|]+`, 'g');
-    for (const src of [text, ...extra]) for (const m of src.matchAll(re)) found.push(clean(m[0]));
+    const implicit: string[] = [];
+    for (const src of [text, ...extra]) for (const m of src.matchAll(re)) implicit.push(clean(m[0]));
     const out: string[] = [];
-    for (const f of found) {
+    const add = (f: string, needExt: boolean) => {
       const p = path.posix.normalize(f);
-      if (!p.startsWith(`${this.outputDir}/`) || p.split('/').includes('..') || p.endsWith('/')) continue;
-      if (!path.posix.extname(p)) continue; // folder / bukan file
+      if (!p.startsWith(`${this.outputDir}/`) || p.split('/').includes('..') || p.endsWith('/')) return;
+      if (needExt && !path.posix.extname(p)) return;
       if (!out.includes(p)) out.push(p);
-    }
+    };
+    explicit.forEach((f) => add(f, false));
+    implicit.forEach((f) => add(f, true));
     return out.slice(0, this.maxPerMessage);
+  }
+
+  /** Path di baris `MEDIA:` yang berada DI LUAR folder output (tidak diambil, tapi perlu diberitahukan). */
+  outsideRefs(text: string): string[] {
+    if (!this.enabled) return [];
+    const out: string[] = [];
+    for (const m of text.matchAll(/^[ \t>*-]*MEDIA:\s*(.+?)\s*$/gm)) {
+      const p = path.posix.normalize(m[1].trim().replace(/^[`'"<(]+|[`'">),.;:]+$/g, ''));
+      if (!p.startsWith(`${this.outputDir}/`) && !out.includes(p)) out.push(p);
+    }
+    return out;
   }
 
   /** Hapus baris `MEDIA:` dari teks jawaban (tombol unduh menggantikannya). */
@@ -165,7 +237,7 @@ export class HermesFilesService {
       const name = path.posix.basename(ref);
       try {
         const buf = await this.fetchBytes(ref);
-        const storageKey = `${randomUUID()}${path.extname(name).toLowerCase()}`;
+        const storageKey = `${randomUUID()}${path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g, '')}`;
         await writeFile(path.join(this.storageDir, storageKey), buf);
         const row = await this.prisma.generatedFile.create({
           data: { messageId, userId, name, mimeType: mimeFor(name), size: buf.length, sourcePath: ref, storageKey },

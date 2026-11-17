@@ -29,6 +29,8 @@ export class SynologyService {
   readonly allowRemember = process.env.SYNOLOGY_ALLOW_REMEMBER_PASSWORD !== 'false';
   /** Lampiran folder: maksimal file yang dibaca & total karakter yang masuk ke konteks AI. */
   readonly folderMaxFiles = Number(process.env.SYNOLOGY_FOLDER_MAX_FILES ?? 25);
+  /** batas unduh file asli dari NAS (semua jenis file) */
+  readonly maxDownloadBytes = Number(process.env.SYNOLOGY_MAX_DOWNLOAD_MB ?? 100) * 1024 * 1024;
   readonly folderMaxChars = Number(process.env.SYNOLOGY_FOLDER_MAX_CHARS ?? 200000);
   /** batas subfolder yang ditelusuri saat melampirkan folder (±250 ms/folder di NAS, 4 paralel) */
   readonly folderMaxScan = Number(process.env.SYNOLOGY_FOLDER_MAX_SCAN ?? 120);
@@ -360,5 +362,14 @@ export class SynologyService {
     await this.withSession(userId, (c, sid) => c.upload(sid, dir, name, content, mime));
     await this.audit.log({ actorId: userId, action: 'synology.save', targetType: 'synology', targetId: `${dir}/${name}`, ipAddress: ip });
     return { ok: true, path: `${dir}/${name}` };
+  }
+
+  /** Unduh file asli (jenis apa pun) dari NAS memakai sesi DSM user — hak akses tetap diatur DSM. */
+  async downloadFile(userId: string, rawPath: string, ip?: string) {
+    const p = this.safePath(rawPath);
+    if (p === '/' || p.split('/').length < 3) throw new BadRequestException('Path file tidak valid.');
+    const buf = await this.withSession(userId, (c, sid) => c.download(sid, p, this.maxDownloadBytes));
+    await this.audit.log({ actorId: userId, action: 'synology.download', targetType: 'synology', targetId: p, ipAddress: ip });
+    return { name: p.split('/').pop() as string, buf };
   }
 }

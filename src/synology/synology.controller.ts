@@ -1,12 +1,13 @@
-import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, NotFoundException, Post, Query, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthUser, CurrentUser } from '../common/auth.decorators';
 import { PrismaService } from '../common/prisma.service';
 import { SynologyService } from './synology.service';
+import { mimeFor } from '../files/hermes-files.service';
 
 class ConnectDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(128) account: string;
@@ -86,6 +87,18 @@ export class SynologyController {
   @Get('content-search')
   contentSearch(@CurrentUser() u: AuthUser, @Query() q: ContentSearchQuery) {
     return this.synology.contentSearch(u.id, q.q, q.path);
+  }
+
+  /** Unduh file asli dari NAS (lampiran chat, sumber basis pengetahuan) — semua jenis file. */
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Get('download')
+  async download(@CurrentUser() u: AuthUser, @Query() q: FolderQuery, @Req() req: Request, @Res() res: Response) {
+    const { name, buf } = await this.synology.downloadFile(u.id, q.path, req.ip);
+    res.setHeader('Content-Type', mimeFor(name));
+    res.setHeader('Content-Length', String(buf.length));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.end(buf);
   }
 
   /** Simpan jawaban AI (milik user sendiri) sebagai file Markdown ke folder Synology. */

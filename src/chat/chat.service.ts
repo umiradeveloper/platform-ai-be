@@ -362,13 +362,22 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       const content = finalText || (fileRefs.length ? 'File sudah dibuat.' : '_(AI tidak mengembalikan jawaban)_');
       assistantMessageId = await this.saveAssistant(conversationId, model, content, tools, inputTokens, outputTokens, !!softError);
       finalText = content;
+      const failed: string[] = [];
       if (fileRefs.length) {
         const r = await this.hermesFiles.collect(user.id, assistantMessageId, fileRefs);
         files = r.files;
-        if (r.failed.length) {
-          finalText += `\n\n_File tidak dapat diambil: ${r.failed.map((f) => `${f.name} (${f.reason})`).join(', ')}._`;
-          await this.prisma.message.update({ where: { id: assistantMessageId }, data: { content: finalText } });
+        failed.push(...r.failed.map((f) => `${f.name} (${f.reason})`));
+      }
+      if (model.provider === 'HERMES' && !softError) {
+        // Hermes menyimpan file di luar folder output → tidak diambil demi keamanan; beri tahu pengguna
+        for (const p of this.hermesFiles.outsideRefs(text)) {
+          failed.push(`${p.split('/').pop()} (disimpan di luar folder ${this.hermesFiles.outputDir})`);
+          this.logger.warn(`File Hermes di luar HERMES_OUTPUT_DIR diabaikan: ${p}`);
         }
+      }
+      if (failed.length) {
+        finalText += `\n\n_File tidak dapat diambil: ${failed.join(', ')}._`;
+        await this.prisma.message.update({ where: { id: assistantMessageId }, data: { content: finalText } });
       }
       if (finalText !== text || files.length) emit('files', { messageId: assistantMessageId, content: finalText, files });
     }
