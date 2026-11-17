@@ -64,6 +64,7 @@ export class ConversationsController {
             id: true, role: true, content: true, modelId: true, inputTokens: true, outputTokens: true,
             toolEvents: true, isError: true, createdAt: true,
             attachments: { select: { id: true, source: true, name: true, path: true, size: true, truncated: true } },
+            files: { select: { id: true, name: true, mimeType: true, size: true } },
             model: { select: { displayName: true, provider: true } },
           },
         },

@@ -120,6 +120,7 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   model          AIModel?     @relation(fields: [modelId], references: [id], onDelete: SetNull)
   attachments    MessageAttachment[]
+  files          GeneratedFile[]
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
@@ -141,6 +142,24 @@ model MessageAttachment {
   createdAt  DateTime @default(now())
 
   @@index([messageId])
+}
+
+/// File yang dibuat Hermes Agent untuk pengguna (dokumen, gambar, spreadsheet, kode …).
+/// Disalin dari folder output Hermes ke penyimpanan backend agar bisa diunduh kapan saja.
+model GeneratedFile {
+  id          String   @id @default(cuid())
+  messageId   String
+  userId      String
+  name        String   @db.VarChar(512)
+  mimeType    String   @db.VarChar(255)
+  size        Int      @default(0)
+  sourcePath  String   @db.VarChar(1024) // path asli di server Hermes
+  storageKey  String   @db.VarChar(255)  // nama file di GENERATED_FILES_DIR
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@index([messageId])
+  @@index([userId])
 }
 
 /// Koneksi akun Synology (DSM) milik tiap pengguna. Semua secret terenkripsi AES-256-GCM.

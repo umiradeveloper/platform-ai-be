@@ -351,4 +351,14 @@ export class SynologyService {
     await this.audit.log({ actorId: userId, action: 'synology.save', targetType: 'synology', targetId: `${dir}/${name}`, ipAddress: ip });
     return { ok: true, path: `${dir}/${name}` };
   }
+
+  /** Simpan file biner (mis. hasil Hermes) ke folder NAS milik user. */
+  async saveFile(userId: string, folder: string, filename: string, content: Buffer, mime: string, ip?: string) {
+    const dir = this.safePath(folder);
+    if (dir === '/') throw new BadRequestException('Pilih folder di dalam shared folder.');
+    const name = filename.trim().replace(/[\\/:*?"<>|]+/g, '-').slice(0, 200) || 'file-umira-ai';
+    await this.withSession(userId, (c, sid) => c.upload(sid, dir, name, content, mime));
+    await this.audit.log({ actorId: userId, action: 'synology.save', targetType: 'synology', targetId: `${dir}/${name}`, ipAddress: ip });
+    return { ok: true, path: `${dir}/${name}` };
+  }
 }

@@ -217,12 +217,61 @@ hermes gateway
 > ⚠️ Hermes dapat menjalankan terminal, membaca dan menulis file, serta melakukan web search di mesinnya.
 > Atur izin dan approval tool di konfigurasi Hermes, dan jangan buka port 8642 ke internet.
 
+### File buatan Hermes (unduh dari chat)
+
+Hermes bisa membuat file lewat tool-nya: laporan Word/PDF, spreadsheet, gambar, kode, dan lain-lain.
+API server Hermes tidak punya endpoint untuk mengunduh file itu, jadi Umira AI mengambilnya sendiri:
+
+1. **Hermes diberi instruksi.** Saat model Hermes dipakai, system prompt meminta Hermes menyimpan file
+   untuk pengguna di `HERMES_OUTPUT_DIR` dan menulis baris `MEDIA:/path/lengkap`. Format ini sama dengan
+   yang dipakai Hermes untuk Telegram dan Discord.
+2. **File diambil setelah jawaban selesai.** Backend mencari path di dalam folder itu (dari baris
+   `MEDIA:`, isi jawaban, dan label tool), menyalin file ke `GENERATED_FILES_DIR`, lalu menghapus baris
+   `MEDIA:` dari teks jawaban.
+3. **Tombol unduh di chat.** Di bawah jawaban muncul kartu file dengan tombol **Unduh** dan **Simpan ke
+   Synology**. Gambar ikut ditampilkan sebagai pratinjau.
+   - Hanya pemilik percakapan yang bisa mengunduh (`GET /files/:id`).
+   - Salinan file tetap tersedia walau file asli di server Hermes sudah dihapus.
+
+**Keamanan:**
+- Hanya file di dalam `HERMES_OUTPUT_DIR` yang diambil. Path di luar folder itu, `..`, dan symlink yang
+  mengarah keluar diabaikan, walaupun AI menulisnya. Ini mencegah file seperti `~/.hermes/.env` ikut
+  terkirim.
+- SVG/HTML selalu diunduh, tidak pernah ditampilkan langsung di halaman.
+
+**Hermes satu server dengan backend:**
+```env
+HERMES_OUTPUT_DIR=/root/.hermes/outputs        # sama persis dengan path yang dilihat Hermes
+# HERMES_OUTPUT_LOCAL_DIR=/mnt/hermes-outputs  # bila folder di-mount di path lain
+```
+Pastikan user yang menjalankan backend (PM2) boleh membaca folder itu.
+
+**Hermes di server lain:** jalankan relay di server Hermes (tanpa dependensi, Node 18+):
+```bash
+# di server Hermes
+mkdir -p /root/.hermes/outputs
+HERMES_OUTPUT_DIR=/root/.hermes/outputs RELAY_KEY=$(openssl rand -hex 32) RELAY_HOST=0.0.0.0 \
+  pm2 start tools/hermes-file-relay.mjs --name hermes-file-relay
+```
+```env
+# di backend Umira AI
+HERMES_OUTPUT_DIR=/root/.hermes/outputs
+HERMES_FILES_RELAY_URL=http://<ip-privat-server-hermes>:8650
+HERMES_FILES_RELAY_KEY=<RELAY_KEY yang sama>
+```
+Buka port 8650 hanya untuk IP server backend (firewall atau jaringan privat), atau taruh di belakang
+Nginx dengan HTTPS.
+
+> Kalau tool terminal/file Hermes berjalan di sandbox (mis. backend terminal Docker), folder output
+> harus di-mount ke sandbox itu di path yang sama. Kalau tidak, file tersimpan di dalam container dan
+> tidak bisa diambil.
+
 ## API (base `/api/v1`)
 
 | Grup | Endpoint |
 |---|---|
 | Publik | `GET /health`, `GET /public/config` |
-| Auth | `POST /auth/register` · `login` · `refresh` · `logout` · `forgot-password` · `reset-password` |
+| Auth | `POST /auth/register` · `login` · `refresh` · `logout` · `forgot-password` · `reset-password`. Klien mobile mengirim header `X-Client: mobile`: refresh token dikirim di body, bukan cookie |
 | Profil | `GET/PATCH /me`, `POST /me/password` |
 | Percakapan | `POST/GET /conversations` (`?q=` cari), `GET/PATCH/DELETE /conversations/:id` |
 | Chat | `POST /chat/completions`, `POST /chat/completions/stream` (SSE), `POST /chat/:id/regenerate` (SSE), `POST /chat/:id/stop` |
@@ -230,6 +279,7 @@ hermes gateway
 | Admin | `/admin/dashboard` · `users` · `providers` (+ `/:type/test`) · `usage` · `costs` · `audit-logs` · `settings` |
 | Usage | `GET /usage/me` |
 | Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `GET /synology/folder-preview?path=`, `GET /synology/content-search?q=&path=`, `POST /synology/save-message` · pada `POST /chat/completions(/stream)`: `synologyFiles[]`, `synologyFolders[]`, `useKnowledge`, `knowledgeIndexIds[]` |
+| File Hermes | `GET /files/:id` (`?inline=1` untuk pratinjau) · `POST /files/:id/save-to-synology` |
 | Basis pengetahuan | `GET/POST /knowledge`, `POST /knowledge/:id/reindex`, `PATCH/DELETE /knowledge/:id`, `GET /knowledge/search?q=` |
 
 Event SSE: `meta`, `title`, `delta {text}`, `tool {tool,label,status}`, `fallback`, `done`, `error`.

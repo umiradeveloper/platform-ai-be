@@ -33,6 +33,24 @@ function meta(req: Request) {
   return { userAgent: req.headers['user-agent'], ip: req.ip };
 }
 
+/**
+ * Klien mobile (header `X-Client: mobile`) tidak memakai cookie: refresh token dikirim di body respons
+ * dan dikirim balik di body `refresh`/`logout`, lalu disimpan di secure storage (Keychain/Keystore).
+ * Klien web tetap memakai cookie httpOnly — body token hanya diterima bila header ini ada.
+ */
+const isMobile = (req: Request) => String(req.headers['x-client'] ?? '').toLowerCase() === 'mobile';
+
+function issue(req: Request, res: Response, r: { accessToken: string; user: unknown; refreshToken: string; refreshExpiresAt: Date }) {
+  if (isMobile(req)) return { accessToken: r.accessToken, user: r.user, refreshToken: r.refreshToken, refreshExpiresAt: r.refreshExpiresAt };
+  setRefreshCookie(res, r.refreshToken, r.refreshExpiresAt);
+  return { accessToken: r.accessToken, user: r.user };
+}
+
+function incomingRefresh(req: Request): string | undefined {
+  if (isMobile(req) && typeof req.body?.refreshToken === 'string') return req.body.refreshToken;
+  return req.cookies?.[COOKIE];
+}
+
 @ApiTags('Authentication')
 @Public()
 @Controller('auth')
@@ -43,8 +61,7 @@ export class AuthController {
   @Post('register')
   async register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const r = await this.auth.register(dto.name, dto.email, dto.password, meta(req));
-    setRefreshCookie(res, r.refreshToken, r.refreshExpiresAt);
-    return { accessToken: r.accessToken, user: r.user };
+    return issue(req, res, r);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -54,19 +71,17 @@ export class AuthController {
     const identifier = (dto.identifier ?? dto.email ?? '').trim();
     if (!identifier) throw new BadRequestException('Email atau username wajib diisi');
     const r = await this.auth.login(identifier, dto.password, meta(req));
-    setRefreshCookie(res, r.refreshToken, r.refreshExpiresAt);
-    return { accessToken: r.accessToken, user: r.user };
+    return issue(req, res, r);
   }
 
   @HttpCode(200)
   @Post('refresh')
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     try {
-      const r = await this.auth.refresh(req.cookies?.[COOKIE], meta(req));
-      setRefreshCookie(res, r.refreshToken, r.refreshExpiresAt);
-      return { accessToken: r.accessToken, user: r.user };
+      const r = await this.auth.refresh(incomingRefresh(req), meta(req));
+      return issue(req, res, r);
     } catch (e) {
-      res.clearCookie(COOKIE, cookieOptions());
+      if (!isMobile(req)) res.clearCookie(COOKIE, cookieOptions());
       throw e;
     }
   }
@@ -74,8 +89,8 @@ export class AuthController {
   @HttpCode(200)
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    await this.auth.logout(req.cookies?.[COOKIE]);
-    res.clearCookie(COOKIE, cookieOptions());
+    await this.auth.logout(incomingRefresh(req));
+    if (!isMobile(req)) res.clearCookie(COOKIE, cookieOptions());
     return { ok: true };
   }
 

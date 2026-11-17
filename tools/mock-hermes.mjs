@@ -45,7 +45,28 @@ http
       const body = JSON.parse(raw);
       const last = [...body.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
       const lamp = [...last.matchAll(/<(?:lampiran|sumber) nama="([^"]+)"[^>]*>([\s\S]*?)<\/(?:lampiran|sumber)>/g)].map((m) => `${m[1]} (${m[2].length} karakter)`);
-      const reply = `**Hermes (mock)** menerima ${body.messages.length} pesan.${lamp.length ? `\n\nLampiran diterima: ${lamp.join(', ')}` : ''}\n\nPesan terakhir Anda: _${last.split('\n')[0].slice(0, 120)}_\n\n\`\`\`ts\nconsole.log('halo dari hermes');\n\`\`\``;
+      // "buat file …" → tulis file ke folder output (meniru tool write_file) + baris MEDIA:
+      const sys = body.messages.find((m) => m.role === 'system')?.content ?? '';
+      const outDir = /simpan file tersebut di folder (\S+?) \(/.exec(String(sys))?.[1];
+      let media = '';
+      if (outDir && /buat(kan)? (file|laporan|dokumen)/i.test(last)) {
+        const fs = await import('node:fs');
+        fs.mkdirSync(outDir, { recursive: true });
+        const stamp = Date.now();
+        const md = `${outDir}/laporan-${stamp}.md`;
+        const csv = `${outDir}/data/rekap-${stamp}.csv`;
+        fs.mkdirSync(`${outDir}/data`, { recursive: true });
+        fs.writeFileSync(md, `# Laporan (mock)\n\nDibuat untuk: ${last.slice(0, 80)}\n`);
+        fs.writeFileSync(csv, 'item,volume,satuan\nBeton K-350,1250,m3\nBesi D19,185000,kg\n');
+        const png = `${outDir}/grafik-${stamp}.png`;
+        try {
+          fs.copyFileSync(new URL('../../frontend/public/umira-logo.png', import.meta.url), png);
+        } catch {
+          /* repo frontend tidak ada — lewati gambar */
+        }
+        media = `\n\nFile sudah saya buat:\n\nMEDIA:${md}\nMEDIA:${csv}${fs.existsSync(png) ? `\nMEDIA:${png}` : ''}`;
+      }
+      const reply = `**Hermes (mock)** menerima ${body.messages.length} pesan.${lamp.length ? `\n\nLampiran diterima: ${lamp.join(', ')}` : ''}\n\nPesan terakhir Anda: _${last.split('\n')[0].slice(0, 120)}_\n\n\`\`\`ts\nconsole.log('halo dari hermes');\n\`\`\`${media}`;
       const id = 'chatcmpl-mock';
       if (!body.stream) {
         return send(res, 200, { id, object: 'chat.completion', model: MODEL, choices: [{ index: 0, message: { role: 'assistant', content: reply }, finish_reason: 'stop' }], usage: { prompt_tokens: 42, completion_tokens: 30, total_tokens: 72 } });

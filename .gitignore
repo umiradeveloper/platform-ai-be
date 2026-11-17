@@ -5,3 +5,4 @@ dist-seed
 *.log
 *.rdb
 .DS_Store
+storage/

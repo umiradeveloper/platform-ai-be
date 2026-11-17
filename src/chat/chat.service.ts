@@ -13,6 +13,7 @@ import { PrismaService } from '../common/prisma.service';
 import { RedisService } from '../common/redis.service';
 import { ExtractedFile, SynologyService } from '../synology/synology.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { GeneratedFileDto, HermesFilesService } from '../files/hermes-files.service';
 import { AuthUser } from '../common/auth.decorators';
 import { SettingsService } from '../settings/settings.service';
 import { ProviderRegistry } from '../providers/provider.registry';
@@ -33,6 +34,8 @@ export interface GenerateResult {
   estimatedCost: number;
   status: 'SUCCESS' | 'CANCELLED' | 'ERROR';
   error?: string;
+  /** file yang dibuat Hermes untuk diunduh pengguna */
+  files?: GeneratedFileDto[];
 }
 
 const STOP_CHANNEL = 'umira:chat:stop';
@@ -52,6 +55,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     private readonly redis: RedisService,
     private readonly synology: SynologyService,
     private readonly knowledge: KnowledgeService,
+    private readonly hermesFiles: HermesFilesService,
   ) {}
 
   onModuleInit() {
@@ -143,7 +147,8 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       used += t;
       picked.unshift({ role: m.role === 'ASSISTANT' ? 'assistant' : m.role === 'SYSTEM' ? 'system' : 'user', content });
     }
-    const system = `${s.systemPrompt}\n\nTanggal hari ini: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full', timeZone: 'Asia/Jakarta' })}.`;
+    let system = `${s.systemPrompt}\n\nTanggal hari ini: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full', timeZone: 'Asia/Jakarta' })}.`;
+    if (model.provider === 'HERMES' && this.hermesFiles.enabled) system += `\n\n${this.hermesFiles.instruction()}`;
     return [{ role: 'system', content: system }, ...picked];
   }
 
@@ -348,9 +353,24 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     const latency = Date.now() - started;
     let assistantMessageId: string | null = null;
 
+    // File buatan Hermes: baris MEDIA:/path → disalin ke server ini & tampil sebagai tombol unduh
+    const fileRefs = model.provider === 'HERMES' && !softError ? this.hermesFiles.extractRefs(text, toolLabels(tools)) : [];
+    let finalText = model.provider === 'HERMES' && this.hermesFiles.enabled ? this.hermesFiles.stripMedia(text) : text;
+    let files: GeneratedFileDto[] = [];
+
     if (text.length || status === 'SUCCESS') {
-      const content = text || '_(AI tidak mengembalikan jawaban)_';
+      const content = finalText || (fileRefs.length ? 'File sudah dibuat.' : '_(AI tidak mengembalikan jawaban)_');
       assistantMessageId = await this.saveAssistant(conversationId, model, content, tools, inputTokens, outputTokens, !!softError);
+      finalText = content;
+      if (fileRefs.length) {
+        const r = await this.hermesFiles.collect(user.id, assistantMessageId, fileRefs);
+        files = r.files;
+        if (r.failed.length) {
+          finalText += `\n\n_File tidak dapat diambil: ${r.failed.map((f) => `${f.name} (${f.reason})`).join(', ')}._`;
+          await this.prisma.message.update({ where: { id: assistantMessageId }, data: { content: finalText } });
+        }
+      }
+      if (finalText !== text || files.length) emit('files', { messageId: assistantMessageId, content: finalText, files });
     }
     if (softError) emit('error', { message: softError });
     const cost = await this.logUsage(user.id, model, conversationId, inputTokens, outputTokens, latency, status, reason);
@@ -362,8 +382,8 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     aiLatency.observe({ provider: model.provider, model: model.modelName }, latency / 1000);
 
     const result: GenerateResult = {
-      conversationId, assistantMessageId, content: text, model: this.modelInfo(model),
-      inputTokens, outputTokens, estimatedCost: cost, status,
+      conversationId, assistantMessageId, content: finalText, model: this.modelInfo(model),
+      inputTokens, outputTokens, estimatedCost: cost, status, ...(files.length ? { files } : {}),
     };
     emit('done', { ...result, content: undefined, latencyMs: latency });
     return result;
@@ -410,6 +430,11 @@ export function looksLikeRawToolCall(text: string): boolean {
   } catch {
     return /^\{\s*"name"\s*:\s*"[\w.-]+"\s*,\s*"(parameters|arguments)"\s*:/.test(t);
   }
+}
+
+/** Label & argumen tool (mis. write_file /path/...) — tempat path file sering muncul. */
+function toolLabels(tools: unknown[]): string[] {
+  return (tools as { label?: string; tool?: string }[]).map((t) => `${t?.tool ?? ''} ${t?.label ?? ''}`);
 }
 
 /** Gabungkan isi file lampiran ke pesan user agar terbaca model (format jelas, dengan batas file). */

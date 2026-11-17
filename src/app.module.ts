@@ -13,6 +13,8 @@ import { SynologyService } from './synology/synology.service';
 import { KnowledgeController } from './knowledge/knowledge.controller';
 import { KnowledgeService } from './knowledge/knowledge.service';
 import { EmbeddingService } from './knowledge/embedding.service';
+import { FilesController } from './files/files.controller';
+import { HermesFilesService } from './files/hermes-files.service';
 import { ChatController } from './chat/chat.controller';
 import { ChatService } from './chat/chat.service';
 import { AuditModule } from './common/audit.service';
@@ -87,6 +89,7 @@ class HealthController {
     AdminController,
     SynologyController,
     KnowledgeController,
+    FilesController,
   ],
   providers: [
     AuthService,
@@ -94,6 +97,7 @@ class HealthController {
     SynologyService,
     EmbeddingService,
     KnowledgeService,
+    HermesFilesService,
     ChatService,
     UsageService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
