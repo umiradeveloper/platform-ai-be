@@ -14,6 +14,8 @@ import { KnowledgeController } from './knowledge/knowledge.controller';
 import { KnowledgeService } from './knowledge/knowledge.service';
 import { EmbeddingService } from './knowledge/embedding.service';
 import { FilesController } from './files/files.controller';
+import { UploadsController } from './uploads/uploads.controller';
+import { UploadsService } from './uploads/uploads.service';
 import { HermesFilesService } from './files/hermes-files.service';
 import { ChatController } from './chat/chat.controller';
 import { ChatService } from './chat/chat.service';
@@ -90,6 +92,7 @@ class HealthController {
     SynologyController,
     KnowledgeController,
     FilesController,
+    UploadsController,
   ],
   providers: [
     AuthService,
@@ -98,6 +101,7 @@ class HealthController {
     EmbeddingService,
     KnowledgeService,
     HermesFilesService,
+    UploadsService,
     ChatService,
     UsageService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -220,6 +220,33 @@ hermes gateway
 > ⚠️ Hermes dapat menjalankan terminal, membaca dan menulis file, serta melakukan web search di mesinnya.
 > Atur izin dan approval tool di konfigurasi Hermes, dan jangan buka port 8642 ke internet.
 
+### Upload file dari komputer
+
+Selain dari Synology, pengguna bisa melampirkan file langsung dari komputernya:
+- tombol **Upload → File dari komputer** atau **Folder dari komputer** (subfolder ikut, path relatif disimpan);
+- seret-lepas file atau folder ke kolom pesan;
+- tempel (Ctrl+V) file atau screenshot.
+
+Tiap file diunggah terpisah ke `POST /uploads` (multipart, dengan progres), lalu ID-nya dikirim bersama pesan
+lewat `uploadIds[]`.
+
+**Jenis file:**
+- Semua jenis file diterima dan disimpan di `UPLOADS_DIR`, dan bisa diunduh lagi dari chat
+  (`GET /uploads/:id`, hanya pemiliknya).
+- Isinya dibaca AI untuk PDF, Word, Excel, teks, dan kode.
+- File lain (gambar, CAD, arsip) tetap dilampirkan, tetapi AI hanya tahu file itu ada. Di kolom pesan
+  file seperti ini ditandai "tidak dibaca AI".
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `UPLOADS_DIR` | `./storage/uploads` | Tempat file disimpan (ikutkan dalam backup) |
+| `UPLOAD_MAX_MB` | `25` | Batas per file. Sesuaikan `client_max_body_size` Nginx (default di `deploy/` 30m) |
+| `UPLOAD_MAX_FILES` | `20` | File upload maksimal per pesan |
+| `UPLOAD_MAX_CHARS_PER_FILE` / `UPLOAD_MAX_CHARS_PER_MESSAGE` | `60000` / `200000` | Batas teks yang masuk ke konteks AI |
+
+Upload yang dibatalkan (× sebelum dikirim) langsung dihapus dari server. Upload yang sudah terkirim tetap
+disimpan bersama percakapan.
+
 ### File buatan Hermes (unduh dari chat)
 
 Hermes bisa membuat file lewat tool-nya: laporan Word/PDF, spreadsheet, gambar, kode, dan lain-lain.
@@ -282,6 +309,7 @@ Nginx dengan HTTPS.
 | Admin | `/admin/dashboard` · `users` · `providers` (+ `/:type/test`) · `usage` · `costs` · `audit-logs` · `settings` |
 | Usage | `GET /usage/me` |
 | Synology | `GET /synology/status`, `POST/DELETE /synology/connect`, `GET /synology/browse?path=`, `GET /synology/search?path=&q=`, `GET /synology/download?path=` (unduh file asli, semua jenis), `GET /synology/folder-preview?path=`, `GET /synology/content-search?q=&path=`, `POST /synology/save-message` · pada `POST /chat/completions(/stream)`: `synologyFiles[]`, `synologyFolders[]`, `useKnowledge`, `knowledgeIndexIds[]` |
+| Upload | `POST /uploads` (multipart `files` + `names`), `GET /uploads/:id`, `DELETE /uploads/:id` · pada chat: `uploadIds[]` |
 | File Hermes | `GET /files/:id` (`?inline=1` untuk pratinjau) · `POST /files/:id/save-to-synology` |
 | Basis pengetahuan | `GET/POST /knowledge`, `POST /knowledge/:id/reindex`, `PATCH/DELETE /knowledge/:id`, `GET /knowledge/search?q=` |
 

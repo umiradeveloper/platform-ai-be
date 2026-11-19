@@ -14,6 +14,8 @@ class SendMessageDto {
   @IsOptional() @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) @MaxLength(1024, { each: true }) synologyFiles?: string[];
   @ApiPropertyOptional({ description: 'Folder Synology yang dilampirkan; dibaca rekursif (maks. 2)', type: [String] })
   @IsOptional() @IsArray() @ArrayMaxSize(2) @IsString({ each: true }) @MaxLength(1024, { each: true }) synologyFolders?: string[];
+  @ApiPropertyOptional({ description: 'ID file yang diunggah dari komputer (POST /uploads)', type: [String] })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @MaxLength(40, { each: true }) uploadIds?: string[];
   @ApiPropertyOptional({ description: 'Cari potongan relevan dari basis pengetahuan (RAG) pengguna' })
   @IsOptional() @IsBoolean() useKnowledge?: boolean;
   @ApiPropertyOptional({ description: 'Batasi ke folder basis pengetahuan tertentu', type: [String] })

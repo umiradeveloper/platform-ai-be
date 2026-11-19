@@ -2,7 +2,10 @@
  * Ekstraksi teks dari file untuk dijadikan konteks AI.
  * Didukung: PDF, DOCX, XLSX, CSV/TSV, TXT/MD/JSON/XML/HTML/LOG dan file kode umum.
  */
-export const TEXT_EXT = ['txt', 'md', 'csv', 'tsv', 'json', 'xml', 'log', 'yml', 'yaml', 'ini', 'sql', 'html', 'htm', 'js', 'ts', 'py', 'php', 'java'];
+export const TEXT_EXT = [
+  'txt', 'md', 'csv', 'tsv', 'json', 'xml', 'log', 'yml', 'yaml', 'ini', 'toml', 'conf', 'env', 'sql', 'html', 'htm', 'css', 'scss',
+  'js', 'jsx', 'ts', 'tsx', 'vue', 'py', 'php', 'java', 'kt', 'go', 'rs', 'rb', 'c', 'h', 'cpp', 'cs', 'swift', 'dart', 'sh', 'bat', 'ps1',
+];
 export const SUPPORTED_EXT = ['pdf', 'docx', 'xlsx', ...TEXT_EXT];
 
 export const extOf = (name: string) => (name.split('.').pop() ?? '').toLowerCase();

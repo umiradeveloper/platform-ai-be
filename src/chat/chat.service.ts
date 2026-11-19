@@ -14,6 +14,7 @@ import { RedisService } from '../common/redis.service';
 import { ExtractedFile, SynologyService } from '../synology/synology.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { GeneratedFileDto, HermesFilesService } from '../files/hermes-files.service';
+import { UploadsService } from '../uploads/uploads.service';
 import { AuthUser } from '../common/auth.decorators';
 import { SettingsService } from '../settings/settings.service';
 import { ProviderRegistry } from '../providers/provider.registry';
@@ -56,6 +57,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     private readonly synology: SynologyService,
     private readonly knowledge: KnowledgeService,
     private readonly hermesFiles: HermesFilesService,
+    private readonly uploads: UploadsService,
   ) {}
 
   onModuleInit() {
@@ -163,6 +165,7 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
       modelId?: string;
       synologyFiles?: string[];
       synologyFolders?: string[];
+      uploadIds?: string[];
       useKnowledge?: boolean;
       knowledgeIndexIds?: string[];
     },
@@ -184,6 +187,10 @@ export class ChatService implements OnModuleInit, OnModuleDestroy {
     for (const p of [...new Set(input.synologyFiles ?? [])]) files.push({ source: 'synology', ...(await this.synology.extract(user.id, p)) });
     for (const p of [...new Set(input.synologyFolders ?? [])]) {
       for (const f of await this.synology.extractFolder(user.id, p)) files.push({ source: f.mimeType === 'text/x-folder-listing' ? 'folder' : 'synology', ...f });
+    }
+    // file yang diunggah langsung dari komputer
+    if (input.uploadIds?.length) {
+      for (const f of await this.uploads.forChat(user.id, [...new Set(input.uploadIds)])) files.push({ source: 'upload', ...f });
     }
     // RAG: potongan relevan dari folder basis pengetahuan pengguna
     if (input.useKnowledge && this.knowledge.enabled) {
@@ -456,10 +463,13 @@ function withAttachments(content: string, files: { source?: string; name: string
     const blocks = own.map((f) =>
       f.source === 'folder'
         ? `<daftar_folder path="${f.path}">\n${f.text}\n</daftar_folder>`
-        : `<lampiran nama="${f.name}" sumber="Synology" path="${f.path}"${f.truncated ? ' terpotong="ya"' : ''}>\n${f.text}\n</lampiran>`,
+        : `<lampiran nama="${f.name}" sumber="${f.source === 'upload' ? 'Upload dari komputer' : 'Synology'}"${f.source === 'upload' ? '' : ` path="${f.path}"`}${f.truncated ? ' terpotong="ya"' : ''}>\n${f.text}\n</lampiran>`,
     );
     const n = own.filter((f) => f.source !== 'folder').length;
-    parts.push(`[Pengguna melampirkan ${n} file dari Synology${own.some((f) => f.source === 'folder') ? ' (termasuk isi folder)' : ''}. Gunakan isinya untuk menjawab.]\n${blocks.join('\n\n')}`);
+    const from = [own.some((f) => f.source === 'synology' || f.source === 'folder') && 'Synology', own.some((f) => f.source === 'upload') && 'komputernya']
+      .filter(Boolean)
+      .join(' dan ');
+    parts.push(`[Pengguna melampirkan ${n} file dari ${from}${own.some((f) => f.source === 'folder') ? ' (termasuk isi folder)' : ''}. Gunakan isinya untuk menjawab.]\n${blocks.join('\n\n')}`);
   }
   if (kb.length) {
     const blocks = kb.map((f) => `<sumber nama="${f.name}" path="${f.path}">\n${f.text}\n</sumber>`);

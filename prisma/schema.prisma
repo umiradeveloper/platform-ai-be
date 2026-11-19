@@ -63,6 +63,7 @@ model User {
   auditLogs          AuditLog[]
   synologyLink       SynologyLink?
   knowledgeIndexes   KnowledgeIndex[]
+  uploads            Upload[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 }
@@ -131,7 +132,7 @@ model Message {
 model MessageAttachment {
   id         String   @id @default(cuid())
   messageId  String
-  source     String   // "synology"
+  source     String   // synology | folder | knowledge | upload
   path       String   @db.VarChar(1024)
   name       String   @db.VarChar(512)
   mimeType   String?
@@ -326,4 +327,22 @@ model KnowledgeChunk {
   @@index([userId, indexId])
   @@index([fileId])
   @@fulltext([text])
+}
+
+/// File yang diunggah pengguna langsung dari komputernya (lampiran chat). Semua jenis file disimpan;
+/// teksnya diekstrak bila formatnya bisa dibaca (PDF, Word, Excel, teks/kode).
+model Upload {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String   @db.VarChar(512) // termasuk subfolder bila diunggah sebagai folder
+  mimeType   String   @db.VarChar(255)
+  size       Int      @default(0)
+  storageKey String   @db.VarChar(255)
+  readable   Boolean  @default(false) // teks berhasil diekstrak
+  text       String   @db.LongText
+  truncated  Boolean  @default(false)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
